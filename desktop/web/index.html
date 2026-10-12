@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KeyScreen 控制台</title>
+<style>
+:root{--bg:#0b1020;--card:#141b2e;--line:#26304a;--fg:#e6ebf5;--mut:#8a94ad;--acc:#38bdf8}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:12px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line)}
+header b{font-size:17px}#status{color:var(--mut);margin-left:auto}
+main{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px;max-width:1400px;margin:auto}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+section.wide{grid-column:1/-1}h2{margin:0 0 10px;font-size:15px}
+button,select,input{background:#0f1526;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit}
+button{cursor:pointer}button.pri{background:var(--acc);color:#04121c;border:0;font-weight:600}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.walls{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.walls figure{margin:0;border:2px solid transparent;border-radius:8px;overflow:hidden;cursor:pointer;background:#000}
+.walls figure.on{border-color:var(--acc)}.walls img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}
+.walls figcaption{font-size:12px;padding:2px 6px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+canvas,#shot{width:100%;border-radius:8px;background:#000;display:block}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left}
+.empty{color:var(--mut);padding:18px;text-align:center}.err{color:#f87171}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><b>KeyScreen 控制台</b><span id="status">连接中…</span></header>
+<main>
+  <section class="wide"><h2>键盘实时画面</h2><img id="shot" alt="键盘画面"></section>
+  <section>
+    <h2>壁纸</h2>
+    <div class="row"><input type="file" id="file" accept=".png,.jpg,.jpeg,.bmp" multiple><button class="pri" id="up">上传到键盘</button></div>
+    <div class="walls" id="walls"><div class="empty">还没有壁纸，先上传一张 16:9 图片</div></div>
+  </section>
+  <section>
+    <h2>应用 Profile</h2>
+    <div class="row"><select id="prof"></select><button id="act">切换到此 Profile</button></div>
+    <div class="row"><input id="newp" placeholder="新应用进程名，如 code、photoshop"><button id="add">新建</button></div>
+    <div class="row">主题色 <input type="color" id="theme" value="#38bdf8"> 键帽透明度 <input type="range" id="op" min="0" max="255" value="170"><button class="pri" id="save">保存</button></div>
+    <div class="row"><input id="legend" placeholder='键帽文字 JSON，如 {"F":"查找","S":"保存"}' style="flex:1"></div>
+  </section>
+  <section><h2>触摸热力图（绿=命中 红=误触）</h2><canvas id="heat" width="960" height="540"></canvas></section>
+  <section><h2>按键统计</h2><div id="stats" class="empty">暂无触摸数据，在键盘上打几个字试试</div></section>
+</main>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

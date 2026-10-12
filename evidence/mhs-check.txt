@@ -1,0 +1,60 @@
+mhs-check listening on ws://127.0.0.1:8800; point the device there and start it
+· waiting up to 120 s for the device
+· keyscreen-01 registered; holding the reply 1 s and sending stop meanwhile
+· profiles: core, perception, streaming
+· configuring every source low, high, then off
+· not reading the Nerve channel for 2 s
+· closing the command channel to check reconnecting
+· closing with 4001 and watching 30 s for a reconnection
+  pass  MSG-1    every command message was a valid JSON-RPC message in a text frame
+  pass  MSG-2    the device's request id was a string
+  pass  MSG-3    no command message over 64 KiB
+  pass  MSG-6    mhs/time with unknown fields was answered normally
+  skip  MSG-7    not observable: whether the device relies on fields outside this version
+  pass  ID-1     device id keyscreen-01 has the id syntax; registered again as keyscreen-01
+  pass  CONN-1   the device reached the hub it was configured with
+  pass  CONN-2   the first message was mhs/register
+  pass  CONN-3   nothing but the stop reply before the register reply
+  pass  CONN-5   the command channel stayed up, answering pings, until mhs-check closed it
+  pass  CONN-6   reconnected after 0.5 s
+  pass  CONN-7   registered again with nothing from before reported
+  pass  CONN-8   no reconnection within 30 s after 4001
+  skip  CONN-9   the device sends no mhs/ping; it relies on WebSocket pings (CONN-5)
+  pass  REG-1    the description validates
+  pass  REG-2    ids unique and uses name declared resources
+  pass  REG-3    no second registration on a connection
+  skip  REG-4    localization none: not a fixed device
+  pass  TOOL-1   6 tool parameter schemas use the 6.2 subset
+  pass  TOOL-2   set_wallpaper without wallpaper: rejected invalid; set_wallpaper with wallpaper=12: rejected invalid; set_wallpaper opacity=510 clamped, noted: opacity was 510, clamped to 255
+  skip  CALL-1   not observable: whether behavior depends on meta
+  pass  CALL-2   set_wallpaper without wallpaper: answered in 1 ms; set_wallpaper with wallpaper=12: answered in 1 ms; set_profile without app: answered in 0 ms
+  skip  CALL-3   no tool uses a reject resource
+  pass  CALL-4   at most 2 progress notifications per second per call
+  pass  CALL-5   9 calls: reply first, at most one result each
+  skip  CTL-1    cancel runs on a tool that uses a reject resource; there is none
+  pass  CTL-2    stop before the register reply answered in 1 ms; stop while idle answered in 0 ms with nothing stopped
+  skip  CTL-3    no motion tool
+  pass  CTL-4    stop reply 0 ms
+  pass  STATE-1  the first mhs/state had all 3 declared fields, problem and faults
+  pass  STATE-2  every mhs/state followed the schema and the declared field types
+  pass  STATE-3  mhs/set on wallpaper, which is not writable, was refused: not writable
+  skip  STATE-4  needs odometry or an operator to see that a setting starts no motion
+  pass  RES-1    no hub-only reasons sent
+  skip  SAFE-1   no motion tool
+  pass  SAFE-4   set_wallpaper kept opacity within its declared range; adjust_key kept dx within its declared range
+  skip  SAFE-7   no odometry, and the device declares no motion tool or manual control
+  pass  CONN-4   the Nerve channel opened with hello
+  pass  MSG-4    19 data messages, each a JSON object with type, binary frames right after
+  pass  MSG-5    no Nerve frame over its size limit
+  pass  PER-1    19 payloads of 1 sources follow their kinds
+  skip  PER-2    no imaging or ranging source
+  pass  STR-1    seq increased by one, nothing dropped
+  pass  STR-2    t never went back in 1 sources
+  skip  STR-3    no source sent a binary payload
+  pass  STR-4    touch at low rate 0.5 Hz: measured 0.50 Hz; touch at high rate 1 Hz: measured 1.00 Hz
+  pass  STR-5    touch off and silent
+  pass  STR-6    touch: after 2 s unread, 1 old messages, then fresh within 1 s
+  skip  STR-7    no manual control
+  pass  TIME-1   every t within 0.00 s of the hub clock after the offset
+  pass  TIME-2   mhs/time answered within 0 ms; device clock +0.000 s from the hub's
+38 pass, 13 skip
