@@ -29,10 +29,11 @@ echo "== 2/3 拷贝程序（只需输一次密码 temppwd）"
 # Boards without internet (Debian 10 vendor image) install pygame/aiohttp from these wheels.
 [ -n "$(ls board/wheels/*.whl 2>/dev/null)" ] || python3 board/fetch_wheels.py || echo "   (wheels 下载失败，板子需自行联网 apt 安装)"
 ssh $SSH_OPTS "$USER_@$HOST" "mkdir -p ~/keyscreen"
-scp $SSH_OPTS -r board "$USER_@$HOST:~/keyscreen/"
+scp $SSH_OPTS -r board desktop/web "$USER_@$HOST:~/keyscreen/"
 echo "== 3/3 板上自检"
 # KS_PASS=temppwd ./deploy.sh  -> sudo without a tty prompt
 SUDO="sudo"; [ -n "$KS_PASS" ] && SUDO="echo '$KS_PASS' | sudo -S -p ''"
 ssh $SSH_OPTS -t "$USER_@$HOST" "cd ~/keyscreen/board && sed -i 's/\r\$//' *.sh *.py && $SUDO sh bringup.sh && $SUDO systemctl restart keyscreen && sleep 5 && systemctl is-active keyscreen && curl -s localhost:8765/api/state | head -c 120; echo"
 ssh $SSH_OPTS -O exit "$USER_@$HOST" 2>/dev/null || true
-echo "完成。电脑上运行: python3 desktop/panel.py --board http://$HOST:8765  然后打开 http://127.0.0.1:43125"
+echo "完成。浏览器打开客户端: http://$HOST:8765/ui/"
+echo "（需要按前台应用自动切换 Profile 时再运行: python3 desktop/panel.py --board http://$HOST:8765）"
