@@ -64,6 +64,7 @@ $("save").onclick = () => {
 
 function live() {
   const ws = new WebSocket(B.replace(/^http/, "ws") + "/ws/events");
+  ws.onopen = refresh;  // board restarted (deploy / systemd) -> reload state instead of staying on "连接中"
   ws.onmessage = (m) => { const e = JSON.parse(m.data); if (e.type === "touch") stats(); else refresh(); };
   ws.onclose = () => setTimeout(live, 2000);
 }

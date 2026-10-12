@@ -26,6 +26,8 @@ Open the panel at http://127.0.0.1:43125 and the dev hub at http://127.0.0.1:419
 2. If the OTG port defaults to host mode, use the official `/boot/uEnv` overlay or device tree to set it to `dr_mode=peripheral`.
 3. Copy `board/` to the board and run `sudo sh bringup.sh`. Every item should show `[PASS]`: HDMI, touch, `/dev/hidg0`, and systemd.
 4. `sudo systemctl start keyscreen`. On the computer, run `python3 desktop/panel.py --board http://<板子IP>:8765`.
+   - Also works with the vendor **Debian 10** image (tested: kernel 4.19.232, LubanCat 1H). That kernel already has `CONFIG_USB_CONFIGFS_F_HID=y`, so no `dr_mode` change is needed. `hid_gadget.sh` adds HID to the vendor `rockchip` gadget, `bringup.sh` installs pygame and aiohttp offline from `board/wheels`, then runs the UI under the existing X session and disables leftover `fluxboard-*` services.
+   - Direct cable without DHCP: the computer's NIC is on 169.254.x. Give the board an address in the same /24 (e.g. `nmcli con mod <conn> +ipv4.addresses 169.254.220.2/16`) so `deploy.sh` can find it. Under WSL, use `KS_PASS=temppwd ./deploy.sh` to avoid an interactive sudo prompt.
 5. Troubleshooting: run `evtest` to inspect raw touch events. On the computer, the new device "KeyScreen Touch Keyboard" should appear.
 
 ## 接入 Agnes（比赛要求的运行时）

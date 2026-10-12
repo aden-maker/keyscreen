@@ -224,8 +224,12 @@ def evdev_loop(engine: Engine, stop: threading.Event) -> None:
     if dev is None:
         print("[touch] no multitouch device found", file=sys.stderr)
         return
-    ax = dev.absinfo(evdev.ecodes.ABS_MT_POSITION_X)
-    ay = dev.absinfo(evdev.ecodes.ABS_MT_POSITION_Y)
+    absinfo = dict(dev.capabilities(absinfo=True)[evdev.ecodes.EV_ABS])  # InputDevice.absinfo() needs evdev >= 1.2
+    ax, ay = absinfo[evdev.ecodes.ABS_MT_POSITION_X], absinfo[evdev.ecodes.ABS_MT_POSITION_Y]
+    try:
+        dev.grab()  # under X the touchscreen is also a pointer; without this every tap fires twice
+    except OSError as e:
+        print(f"[touch] grab failed ({e}); another process may own the touchscreen", file=sys.stderr)
     print(f"[touch] {dev.name} {ax.max}x{ay.max}", file=sys.stderr)
     slot, pos, tid = 0, {}, {}
     for ev in dev.read_loop():
