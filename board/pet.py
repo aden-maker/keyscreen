@@ -13,6 +13,7 @@ from pygame import gfxdraw
 
 HAIR, HAIR2, SKIN, DRESS, DRESS2 = (190, 156, 255), (160, 124, 238), (255, 232, 220), (255, 138, 190), (255, 205, 228)
 SOCK, SHOE, EYE, EYE2, MOUTH, CHEEK, RIB = (255, 255, 255), (232, 98, 150), (52, 58, 120), (96, 140, 235), (200, 80, 110), (255, 186, 200), (255, 120, 170)
+KEY = (70, 52, 92)  # transparent key; AA edges blend into it, giving a soft dark outline
 SW, SH, CX, FY = 320, 300, 160, 292  # local surface, feet at (CX, FY)
 HIP, SHO, HEAD, HR = 62, 108, 162, 54
 TAP_LINES = ["诶嘿~", "戳我干嘛啦 (>_<)", "Agnes 在这里哦~", "今天也要加油！", "要好好打字哦～", "嗯？有事找我吗？", "按住我可以拖着走哦"]
@@ -63,7 +64,8 @@ class Pet:
         self.drag = None  # {slot, dx, dy, t0, x0, y0, hist}
         self.hearts, self.dust = [], []
         self.say_text, self.say_until = "", 0.0
-        self.surf = pg.Surface((SW, SH), pg.SRCALPHA)
+        self.surf = pg.Surface((SW, SH))  # opaque + colorkey: gfxdraw AA on SRCALPHA leaves seams where shapes overlap
+        self.surf.set_colorkey(KEY)
         self._img, self._rt = self.surf, 0.0
         self.zfont = None
 
@@ -253,49 +255,56 @@ class Pet:
 
     # ---------- pose ----------
     def pose(self) -> dict:
+        """Angles in degrees: 0 = down, 90 = forward. knee bends the shin backward, elb bends the forearm forward."""
         t, m, mt = self.t, self.mode, self.mt
-        p = dict(lean=0.0, bob=0.0, sy=1.0, legL=3.0, legR=-3.0, armL=8.0, armR=-6.0, face="open", sit=0.0, nod=0.0, hem=0.0, look=0.0)
+        p = dict(lean=0.0, bob=0.0, sy=1.0, legL=3.0, legR=-3.0, kneeL=4.0, kneeR=4.0, armL=10.0, armR=-8.0, elbL=15.0, elbR=15.0,
+                 face="open", sit=0.0, nod=0.0, hem=0.0, look=0.0, tilt=0.0)
         if m == "idle":
             s = math.sin(t * 2.2)
-            p.update(bob=s * 2, armL=8 + 4 * s, armR=-6 - 4 * s, look=math.sin(t * 0.7) * 0.6)
+            p.update(sy=1 + 0.012 * s, armL=10 + 3 * s, armR=-8 - 3 * s, look=math.sin(t * 0.7) * 0.6, tilt=math.sin(t * 0.9) * 3)
         elif m in ("walk", "run"):
             run = m == "run"
-            ph = t * (15 if run else 9)
-            s = math.sin(ph)
-            a = 50 if run else 26
-            p.update(legL=a * s, legR=-a * s, armL=-(60 if run else 22) * s + (30 if run else 0), armR=(60 if run else 22) * s + (30 if run else 0),
-                     bob=abs(s) * (11 if run else 5), lean=14 if run else 4, hem=abs(s) * (5 if run else 2), face="happy" if run else "open")
+            ph = t * (14 if run else 8.5)
+            s, c = math.sin(ph), math.cos(ph)
+            a = 42 if run else 24
+            kb, kr = (12, 85) if run else (4, 38)
+            sw, off = (55, 20) if run else (20, 0)
+            p.update(legL=a * s, legR=-a * s, kneeL=kb + kr * max(0, c), kneeR=kb + kr * max(0, -c),
+                     armL=-sw * s + off, armR=sw * s + off, elbL=85 if run else 25, elbR=85 if run else 25,
+                     bob=abs(c) * (9 if run else 4), lean=16 if run else 5, hem=abs(s) * (5 if run else 2), face="happy" if run else "open")
         elif m in ("air", "cheer"):
             if self.vy < 0 or m == "cheer":
-                p.update(armL=165, armR=155, legL=-25, legR=12, face="happy", hem=4)
+                p.update(armL=165, armR=150, elbL=10, elbR=10, legL=35, kneeL=85, legR=-5, kneeR=35, face="happy", hem=4)
             else:
                 w = math.sin(t * 24)
-                p.update(armL=145 + 25 * w, armR=145 - 25 * w, legL=18 * w, legR=-18 * w, face="surprise", hem=8)
+                p.update(armL=130 + 25 * w, armR=130 - 25 * w, elbL=20, elbR=20, legL=15 * w, legR=-15 * w, kneeL=20, kneeR=20,
+                         face="surprise", hem=8)
             if self.drag is None and self.vy < 0 and mt < 0.08:
                 p.update(sy=0.86)
         elif m == "drag":
-            sw = self.swing
-            p.update(armL=172, armR=160, legL=sw + 14 * math.sin(t * 8), legR=sw - 14 * math.sin(t * 8), lean=sw * 0.35,
-                     face="surprise" if abs(self.swing_v) > 60 else "happy", hem=6)
+            sw, k = self.swing, math.sin(t * 8)
+            p.update(armL=170, armR=158, elbL=5, elbR=5, legL=sw + 12 * k, legR=sw - 12 * k, kneeL=22 + 15 * math.sin(t * 8 + 1),
+                     kneeR=22 + 15 * math.sin(t * 8 + 2), lean=sw * 0.35, face="surprise" if abs(self.swing_v) > 60 else "happy", hem=6)
         elif m == "land":
             k = 1 - min(1, mt / 0.16)
-            p.update(sy=1 - 0.18 * k, armL=40, armR=40, legL=8, legR=-8)
+            p.update(sy=1 - 0.2 * k, armL=45, armR=45, elbL=30, elbR=30, legL=14, legR=-10, kneeL=50 * k, kneeR=50 * k)
         elif m == "dizzy":
-            p.update(lean=7 * math.sin(t * 7), face="dizzy", armL=25, armR=-20)
+            p.update(lean=7 * math.sin(t * 7), tilt=10 * math.sin(t * 5), face="dizzy", armL=25, armR=-20, elbL=20, elbR=20, kneeL=10, kneeR=10)
         elif m in ("sit", "sleep"):
             sleep = m == "sleep"
-            p.update(sit=1, legL=82, legR=76, armL=25, armR=35, bob=math.sin(t * 1.6) * 1.5, face="sleep" if sleep else "open",
-                     nod=(math.sin(t * 1.2) * 4 + 4) if sleep else 0)
+            p.update(sit=1, legL=85, legR=80, kneeL=85, kneeR=80, armL=20, armR=30, elbL=40, elbR=50, bob=math.sin(t * 1.6) * 1.5,
+                     face="sleep" if sleep else "open", nod=(math.sin(t * 1.2) * 4 + 4) if sleep else 0, tilt=6 if sleep else 0)
         elif m == "think":
-            p.update(armR=150, armL=10, lean=3 * math.sin(t * 1.5), face="focus", look=-0.6)
+            p.update(armR=40, elbR=120, armL=15, lean=3 * math.sin(t * 1.5), tilt=6 + 3 * math.sin(t * 1.5), face="focus", look=-0.6)
         elif m == "wave":
-            p.update(armR=145 + 28 * math.sin(t * 14), armL=6, face="happy", bob=math.sin(t * 3) * 2)
+            w = math.sin(t * 12)
+            p.update(armR=150 + 25 * w, elbR=25 + 15 * math.sin(t * 12 + 1), armL=8, face="happy", bob=math.sin(t * 3) * 2, tilt=6)
         elif m == "dance":
             b = math.sin(t * 8)
-            p.update(lean=10 * b, armL=125 if b > 0 else 30, armR=30 if b > 0 else 125, legL=16 * b, legR=-16 * b,
-                     bob=abs(math.cos(t * 8)) * 9, face="happy", hem=abs(b) * 4)
+            p.update(lean=10 * b, tilt=8 * b, armL=140 if b > 0 else 40, armR=40 if b > 0 else 140, elbL=40, elbR=40, legL=18 * b, legR=-18 * b,
+                     kneeL=20 + 30 * max(0, b), kneeR=20 + 30 * max(0, -b), bob=abs(math.cos(t * 8)) * 9, face="happy", hem=abs(b) * 4)
         elif m == "spin":
-            p.update(armL=90, armR=90, face="happy", hem=6)
+            p.update(armL=90, armR=90, elbL=0, elbR=0, face="happy", hem=6)
         if self.mode != "sleep" and self.blink_at - 0.12 < time.time() < self.blink_at and p["face"] in ("open", "focus"):
             p["face"] = "blink"
         if time.time() > self.blink_at:
@@ -305,7 +314,7 @@ class Pet:
     # ---------- drawing ----------
     def _render(self) -> None:
         s, p = self.surf, self.pose()
-        s.fill((0, 0, 0, 0))
+        s.fill(KEY)
         lean, sy, bob, sit = math.radians(p["lean"]), p["sy"], p["bob"], p["sit"]
         drop = 40 * sit
 
@@ -314,77 +323,104 @@ class Pet:
             shift = (h2 - (HIP - drop)) * math.tan(lean) if h2 > HIP - drop else 0
             return (CX + dx + shift, FY - h2 * sy - bob)
 
-        hipL, hipR = pt(-9, HIP), pt(9, HIP)
-        shoL, shoR = pt(-19, SHO - 6), pt(19, SHO - 6)
+        def leg(hip, a, k, col, shoe):
+            knee = limb_end(hip, a, 24)
+            foot = limb_end(knee, a - k, 23)
+            cap(s, col, hip, knee, 11)
+            cap(s, col, knee, foot, 10)
+            ell(s, shoe, foot[0] + 4, foot[1] + 2, 10, 6)
+
+        def arm(sh, a, e, col, sleeve):
+            el = limb_end(sh, a, 19)
+            hand = limb_end(el, a + e, 17)
+            cap(s, col, sh, el, 9)
+            cap(s, col, el, hand, 8)
+            circ(s, col, hand, 6)
+            circ(s, sleeve, sh, 9)
+
+        hipL, hipR = pt(-8, HIP), pt(8, HIP)
+        shoL, shoR = pt(-17, SHO - 6), pt(17, SHO - 6)
         hx, hy = pt(0, HEAD)
+        hx += p["tilt"] * 0.5
         hy += p["nod"]
         darker = lambda c: tuple(max(0, int(v * 0.86)) for v in c)
-        # far limbs
-        e = limb_end(hipL, p["legL"], 44)
-        cap(s, darker(SOCK), hipL, e, 13)
-        circ(s, darker(SHOE), (e[0] + 3, e[1] + 2), 8)
-        e = limb_end(shoL, p["armL"], 38)
-        cap(s, darker(SKIN), shoL, e, 11)
-        circ(s, darker(SKIN), e, 7)
-        # twin tails (chains of circles, swaying)
+        # twin tails: droplet-shaped, hanging and curling inward, swaying behind everything
         for side in (-1, 1):
-            base = (hx + side * 46, hy - 18)
-            for i in range(7):
-                d = i * 14
-                ang = math.radians(side * 18 + self.tail + math.sin(self.t * 3 + side) * 6 + i * side * 2)
-                circ(s, HAIR2 if side < 0 else HAIR, (base[0] + math.sin(ang) * d + side * i * 2, base[1] + math.cos(ang) * d), 19 - i * 1.5)
-        # dress
-        hem = 40 + p["hem"]
-        poly(s, DRESS, [pt(-17, SHO), pt(17, SHO), (hipR[0] + hem - 9, hipR[1] + 10), (hipL[0] - hem + 9, hipL[1] + 10)])
-        poly(s, DRESS2, [(hipL[0] - hem + 9, hipL[1] + 4), (hipR[0] + hem - 9, hipR[1] + 4), (hipR[0] + hem - 9, hipR[1] + 10), (hipL[0] - hem + 9, hipL[1] + 10)])
-        poly(s, SOCK, [pt(-9, SHO + 1), pt(9, SHO + 1), pt(0, SHO - 12)])
-        circ(s, EYE2, pt(0, SHO - 8), 4)
-        # near limbs
-        e = limb_end(hipR, p["legR"], 44)
-        cap(s, SOCK, hipR, e, 13)
-        circ(s, SHOE, (e[0] + 3, e[1] + 2), 8)
+            x, y = hx + side * 50, hy - 24
+            L, R = [], []
+            for i in range(10):
+                u = i / 9
+                ang = math.radians(side * (8 + 16 * u - 40 * u ** 3) + self.tail * (0.4 + u) + math.sin(self.t * 3 + side + u * 2) * 7 * u)
+                w = 4 + 14 * math.sin(math.pi * (0.15 + 0.85 * u))
+                nx, ny = math.cos(ang), -math.sin(ang)
+                L.append((x + nx * w, y + ny * w))
+                R.append((x - nx * w, y - ny * w))
+                x, y = x + math.sin(ang) * 11, y + math.cos(ang) * 11
+            poly(s, HAIR2, L + R[::-1])
+            circ(s, RIB, (hx + side * 50, hy - 24), 7)
+        circ(s, HAIR2, (hx, hy - 6), HR + 5)
+        ell(s, HAIR2, hx, hy + 16, HR + 2, 36)
+        # legs and far arm sit under the dress
+        leg(hipL, p["legL"], p["kneeL"], darker(SOCK), darker(SHOE))
+        leg(hipR, p["legR"], p["kneeR"], SOCK, SHOE)
+        arm(shoL, p["armL"], p["elbL"], darker(SKIN), darker(DRESS))
+        hem = 36 + p["hem"]
+        hl, hr = (hipL[0] - hem + 8, hipL[1] + 12), (hipR[0] + hem - 8, hipR[1] + 12)
+        poly(s, DRESS, [pt(-15, SHO), pt(15, SHO), hr, hl])
+        for i in range(8):  # lace trim
+            u = i / 7
+            circ(s, DRESS2, (hl[0] + (hr[0] - hl[0]) * u, hl[1] + (hr[1] - hl[1]) * u), 6)
+        poly(s, SOCK, [pt(-15, SHO + 1), pt(15, SHO + 1), pt(0, SHO - 16)])
+        bx, by = pt(0, SHO - 10)
+        for d in (-1, 1):
+            poly(s, RIB, [(bx, by), (bx + d * 10, by - 6), (bx + d * 10, by + 6)])
+        circ(s, (255, 170, 205), (bx, by), 3)
         # head
-        circ(s, HAIR2, (hx, hy - 4), HR + 6)
-        circ(s, SKIN, (hx, hy), HR)
-        ell(s, HAIR, hx, hy - 30, HR + 2, 32)
-        for bx in (-30, -8, 14, 34):
-            circ(s, HAIR, (hx + bx, hy - 12), 15)
-        ah = math.sin(self.t * 4) * 6
-        cap(s, HAIR, (hx - 2, hy - 54), (hx + 10 + ah, hy - 76), 6)
-        cap(s, HAIR, (hx + 10 + ah, hy - 76), (hx + 24 + ah, hy - 70), 5)
-        for dx in (-1, 1):  # ribbon
-            poly(s, RIB, [(hx - 44, hy - 40), (hx - 44 + dx * 22, hy - 54), (hx - 44 + dx * 20, hy - 28)])
-        circ(s, (255, 170, 205), (hx - 44, hy - 40), 6)
-        # face (drawn facing right; flipped later)
-        f, lx = p["face"], 6 + p["look"] * 4
-        for i, ex in enumerate((-19, 21)):
-            cx, cy = hx + ex + lx, hy + 10
+        ell(s, SKIN, hx, hy + 2, HR - 1, HR - 4)
+        f, lx = p["face"], 5 + p["look"] * 4
+        for side, ex in ((-1, -20), (1, 20)):
+            cx, cy = hx + ex + lx, hy + 12
             if f in ("blink", "sleep"):
-                cap(s, EYE, (cx - 9, cy + 4), (cx + 9, cy + 4), 4)
+                cap(s, EYE, (cx - 10, cy + 2), (cx, cy + 6), 4)
+                cap(s, EYE, (cx, cy + 6), (cx + 10, cy + 2), 4)
             elif f == "happy":
-                for k in range(-9, 9, 3):
-                    circ(s, EYE, (cx + k, cy + 6 - math.sqrt(max(0, 81 - k * k)) * 0.7), 2)
+                cap(s, EYE, (cx - 10, cy + 4), (cx, cy - 4), 4)
+                cap(s, EYE, (cx, cy - 4), (cx + 10, cy + 4), 4)
             elif f == "dizzy":
                 cap(s, EYE, (cx - 8, cy - 6), (cx + 8, cy + 8), 4)
                 cap(s, EYE, (cx - 8, cy + 8), (cx + 8, cy - 6), 4)
             else:
-                up = -4 if f == "focus" else 0
-                ell(s, EYE, cx, cy, 10, 14 if f != "surprise" else 11)
-                ell(s, EYE2, cx, cy + 4 + up, 7, 8)
-                circ(s, (255, 255, 255), (cx - 3, cy - 5 + up), 4)
-        ell(s, CHEEK, hx - 30 + lx, hy + 26, 9, 5)
-        ell(s, CHEEK, hx + 34 + lx, hy + 26, 9, 5)
-        mx, my = hx + 2 + lx, hy + 30
+                top = cy - 3 if f == "focus" else cy - 13
+                ry = 10 if f == "focus" else 12 if f == "surprise" else 15
+                ell(s, EYE, cx, cy + (4 if f == "focus" else 0), 11, ry)
+                ell(s, EYE2, cx, cy + 5, 8, 8 if f != "surprise" else 6)
+                circ(s, (255, 255, 255), (cx - 4, cy - 5 + (5 if f == "focus" else 0)), 4)
+                circ(s, (255, 255, 255), (cx + 4, cy + 8), 2)
+                cap(s, EYE, (cx - 12, top), (cx + 12, top), 5)
+                cap(s, EYE, (cx + side * 12, top), (cx + side * 17, top - 5), 3)
+        ell(s, CHEEK, hx - 33 + lx, hy + 28, 9, 5)
+        ell(s, CHEEK, hx + 33 + lx, hy + 28, 9, 5)
+        mx, my = hx + lx, hy + 32
         if f in ("surprise", "dizzy"):
             ell(s, MOUTH, mx, my + 2, 5, 6)
         elif f == "happy":
-            poly(s, MOUTH, [(mx - 7, my - 2), (mx + 7, my - 2), (mx, my + 6)])
+            poly(s, MOUTH, [(mx - 7, my - 2), (mx + 7, my - 2), (mx + 4, my + 5), (mx - 4, my + 5)])
+            ell(s, (255, 150, 170), mx, my + 3, 3, 2)
         else:
-            cap(s, MOUTH, (mx - 5, my), (mx + 5, my), 3)
-        # near arm last so waves read in front of the body
-        e = limb_end(shoR, p["armR"], 38)
-        cap(s, SKIN, shoR, e, 11)
-        circ(s, SKIN, e, 7)
+            cap(s, MOUTH, (mx - 5, my), (mx, my + 2), 3)
+            cap(s, MOUTH, (mx, my + 2), (mx + 5, my), 3)
+        # bangs: dome + pointed locks
+        dome = [(hx + math.cos(math.radians(a)) * (HR + 4), hy - 20 - math.sin(math.radians(a)) * (HR - 2)) for a in range(0, 181, 15)]
+        locks = [(-52, 22), (-42, -6), (-30, 6), (-17, -12), (-3, 3), (11, -12), (25, 5), (38, -6), (52, 22)]
+        poly(s, HAIR, dome + [(hx + dx, hy + dy) for dx, dy in locks])
+        ell(s, (224, 208, 255), hx - 16, hy - 44, 16, 5)
+        ah = math.sin(self.t * 4) * 6
+        cap(s, HAIR, (hx - 2, hy - 72), (hx + 10 + ah, hy - 90), 6)
+        cap(s, HAIR, (hx + 10 + ah, hy - 90), (hx + 24 + ah, hy - 84), 5)
+        for d in (-1, 1):  # bow
+            poly(s, RIB, [(hx - 40, hy - 50), (hx - 40 + d * 22, hy - 64), (hx - 40 + d * 20, hy - 38)])
+        circ(s, (255, 170, 205), (hx - 40, hy - 50), 6)
+        arm(shoR, p["armR"], p["elbR"], SKIN, DRESS)
 
     def draw(self, canvas) -> list:
         pg = self.pg

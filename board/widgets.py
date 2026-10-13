@@ -12,6 +12,7 @@ import threading
 import time
 from pathlib import Path
 
+from ime import Pinyin
 from pet import Pet
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -24,6 +25,8 @@ PRESETS = [  # (chip label, prompt)
 TAP_LINES = ["诶嘿~", "戳我干嘛啦 (>_<)", "Agnes 在这里哦~", "今天也要加油！", "要好好打字哦～", "嗯？有事找我吗？", "点右下角就能和我说话啦"]
 SHIFT = {"1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&", "8": "*", "9": "(", "0": ")", "-": "_", "=": "+",
          "[": "{", "]": "}", "\\": "|", ";": ":", "'": '"', ",": "<", ".": ">", "/": "?"}
+ZH_PUNCT = {",": "，", ".": "。", "/": "？", ";": "；", "'": "！", "\\": "、", "[": "「", "]": "」"}
+PAGE = 5
 ease = lambda t: 1 - (1 - t) ** 3
 
 
@@ -55,6 +58,8 @@ class Chat:
         self.items: list[dict] = []  # {id, prompt, status: queued|running|done|error, reply, t}
         self.text, self.focused, self.shift, self.caps = "", False, False, False
         self.dirty, self.next_id, self.typed_at = True, 1, 0.0
+        self.ime, self.zh, self.py, self.page = None, True, "", 0  # Chinese pinyin input by default
+        self._cands = ("", [])
 
     def send(self, prompt: str) -> dict:
         prompt = prompt.strip()
@@ -95,8 +100,55 @@ class Chat:
         done = [it for it in self.items if it["status"] in ("done", "error") and it["reply"]]
         return done[-1] if done else None
 
+    @property
+    def cands(self) -> list:
+        if self._cands[0] != self.py:
+            self._cands = (self.py, self.ime.cands(self.py) if (self.ime and self.py) else [])
+        return self._cands[1]
+
+    def pick(self, i: int) -> None:
+        c = self.cands
+        if 0 <= i < len(c):
+            w, n = c[i]
+            self.text, self.py, self.page = (self.text + w)[:200], self.py[n:], 0
+        self.dirty = True
+
     def key(self, label: str) -> None:
         self.typed_at = time.time()
+        self.dirty = True
+        if label in ("Shift", "RShift"):
+            self.text, self.py, self.zh = self.text + self.py, "", not self.zh
+            return
+        if self.zh and self.py:
+            if label == "Space":
+                return self.pick(0)
+            if label in "123456789" and len(label) == 1:
+                return self.pick(self.page * PAGE + int(label) - 1)
+            if label == "-":
+                self.page = max(0, self.page - 1)
+                return
+            if label == "=":
+                self.page += (self.page + 1) * PAGE < len(self.cands)
+                return
+            if label == "Bksp":
+                self.py, self.page = self.py[:-1], 0
+                return
+            if label == "Enter":
+                self.text, self.py = self.text + self.py, ""
+                return
+            if len(label) == 1 and label.isalpha():
+                self.py = (self.py + label.lower())[:30]
+                self.page = 0
+                return
+            if len(label) != 1:
+                return
+            self.pick(0)
+        if self.zh and not self.caps and len(label) == 1 and label.isalpha():
+            self.py = label.lower()
+            return
+        if self.zh and label in ZH_PUNCT:
+            self.text = (self.text + ZH_PUNCT[label])[:200]
+            return
         if label == "Enter":
             self.send(self.text)
             self.text = ""
@@ -104,8 +156,6 @@ class Chat:
             self.text = self.text[:-1]
         elif label == "Space":
             self.text += " "
-        elif label in ("Shift", "RShift"):
-            self.shift = not self.shift
         elif label == "Caps":
             self.caps = not self.caps
         elif len(label) == 1 and len(self.text) < 200:
@@ -123,6 +173,7 @@ class Widgets:
     def __init__(self, pg, store, engine, bar_h: int, kb_y: int, w: int, mkfont) -> None:
         self.pg, self.store, self.engine, self.W = pg, store, engine, w
         self.chat = Chat(store)
+        self.chat.ime = Pinyin(ASSETS / "pinyin.txt")
         self.font, self.tiny = mkfont(26), mkfont(22)
         self.box = pg.Rect(w - 910, bar_h + 12, 880, kb_y - bar_h - 120)
         self.toggle = (w - 70, kb_y - 62, 40)  # cx, cy, r
@@ -176,7 +227,10 @@ class Widgets:
         if self.open and self.box.collidepoint(x, y):
             for rect, prompt in self.chips:
                 if rect.collidepoint(x, y):
-                    self.chat.send(prompt)
+                    if isinstance(prompt, int):
+                        self.chat.pick(prompt)
+                    else:
+                        self.chat.send(prompt)
                     return
             if self.send_rect and self.send_rect.collidepoint(x, y):
                 self.chat.send(self.chat.text)
@@ -193,7 +247,9 @@ class Widgets:
         self.pet.poke()
         if not self.open:
             return False
-        if label == "Esc":
+        if label == "Esc" and self.chat.py:
+            self.chat.py, self.chat.dirty = "", True
+        elif label == "Esc":
             self.set_open(False)
         else:
             self.chat.key(label)
@@ -207,7 +263,7 @@ class Widgets:
         for i in range(12):  # feathered glass, no outline
             pg.draw.rect(s, (22, 14, 42, 13), (i * 3, i * 3, bw - i * 6, bh - i * 6), border_radius=34)
         s.blit(shadow_text(pg, f, "Agnes 助手", accent), (34, 22))
-        st = "思考中…" if c.busy else "键盘输入已转给 Agnes · Enter 发送 · Esc 收起"
+        st = "思考中…" if c.busy else "Shift 中/英 · 空格/数字选字 · Enter 发送 · Esc 收起"
         t = shadow_text(pg, tf, st, (225, 215, 240))
         s.blit(t, (bw - t.get_width() - 34, 28))
         y_in, lh = bh - 70, tf.get_height() + 4
@@ -224,15 +280,34 @@ class Widgets:
             s.blit(shadow_text(pg, tf, l, (255, 255, 255) if who == "you" else (255, 205, 232)), (34, y))
             y += lh
         self.chips, x = [], 34
-        for label, prompt in PRESETS:
-            t = tf.render(label, True, (60, 30, 70))
-            r = pg.Rect(x, y_chip, t.get_width() + 30, 40)
-            pg.draw.rect(s, (*tuple(accent)[:3], 215), r, border_radius=20)
-            s.blit(t, (r.x + 15, r.y + (40 - t.get_height()) // 2))
-            self.chips.append((r.move(self.box.topleft), prompt))
-            x += r.w + 12
+        if c.py:  # composing: the chip row becomes the candidate row
+            t = shadow_text(pg, f, c.py, (255, 255, 255))
+            s.blit(t, (x, y_chip + (40 - t.get_height()) // 2))
+            x += t.get_width() + 18
+            cands = c.cands
+            for i, (w, _) in enumerate(cands[c.page * PAGE:(c.page + 1) * PAGE]):
+                t = tf.render(f"{i + 1}.{w}", True, (60, 30, 70))
+                r = pg.Rect(x, y_chip, t.get_width() + 26, 40)
+                pg.draw.rect(s, (*tuple(accent)[:3], 235 if i == 0 else 150), r, border_radius=20)
+                s.blit(t, (r.x + 13, r.y + (40 - t.get_height()) // 2))
+                self.chips.append((r.move(self.box.topleft), c.page * PAGE + i))
+                x += r.w + 10
+            if len(cands) > PAGE:
+                s.blit(shadow_text(pg, tf, "- / = 翻页", (225, 215, 240)), (x + 6, y_chip + 8))
+        else:
+            for label, prompt in PRESETS:
+                t = tf.render(label, True, (60, 30, 70))
+                r = pg.Rect(x, y_chip, t.get_width() + 30, 40)
+                pg.draw.rect(s, (*tuple(accent)[:3], 215), r, border_radius=20)
+                s.blit(t, (r.x + 15, r.y + (40 - t.get_height()) // 2))
+                self.chips.append((r.move(self.box.topleft), prompt))
+                x += r.w + 12
         inp = pg.Rect(34, y_in, bw - 68 - 124, 50)
         pg.draw.rect(s, (255, 255, 255, 200), inp, border_radius=25)
+        t = tf.render("中" if c.zh else "英", True, (255, 255, 255))
+        pg.draw.circle(s, (*tuple(accent)[:3], 255), (inp.right - 27, inp.centery), 18)
+        s.blit(t, (inp.right - 27 - t.get_width() // 2, inp.centery - t.get_height() // 2))
+        inp.width -= 44
         txt = c.text if c.text else ("" if c.focused else "在这里打字…")
         t = f.render(txt + ("|" if c.focused and self.caret_on else ""), True, (50, 35, 70))
         s.set_clip(inp.inflate(-30, 0))
@@ -274,7 +349,7 @@ class Widgets:
         if self.layer_on and not self.open:
             self.layer_on, dirty = False, self.box
         elif self.open and self.anim >= 1.0 and not self.layer_on:
-            self.cache.set_alpha(None)
+            self.cache.set_alpha(255)  # set_alpha(None) disables per-pixel blending in pygame 2 -> opaque box
             self.layer_on, dirty = True, self.box
         return dirty
 
@@ -285,7 +360,7 @@ class Widgets:
             e = ease(self.anim)
             self.cache.set_alpha(int(255 * e))
             rects.append(canvas.blit(self.cache, (int(self.box.x + (1 - e) * 260), self.box.y)))
-            self.cache.set_alpha(None)
+            self.cache.set_alpha(255)
         if self.info:
             if self.info_surf is None:
                 self.info_surf = shadow_text(pg, self.tiny, self.info, (255, 255, 255))
