@@ -1,0 +1,7 @@
+- tool call_device
+- tool call_device · ok · 32ms
+- tool call_device
+- tool call_device · ok · 28ms
+我在 default profile 上选了 `dark_ocean.png`，并配了 `#5D7B8A` 的灰蓝主题和 110/255 的按键不透明度，因为深海洋壁纸偏暗、低眩光，和冷灰蓝主题更协调，适合长时间写代码。
+
+**备选**：如果觉得当前太冷，可以试 `neon_tiles.png` 配一个更亮的青绿色主题（例如 `#3EB489`）和更高不透明度（约 140），但霓虹壁纸可能比 dark_ocean 更刺眼。

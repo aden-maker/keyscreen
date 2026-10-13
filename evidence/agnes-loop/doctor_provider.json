@@ -1,0 +1,11 @@
+[
+  {
+    "name": "provider",
+    "status": "warn",
+    "detail": [
+      "configured routes (1): account-acct-cd2bb96e-e724-42dd-b36b-93bb01671379",
+      "credentials and selected-model inference not checked; rerun with --probe to opt in"
+    ]
+  }
+]
+

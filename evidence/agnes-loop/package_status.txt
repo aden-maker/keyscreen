@@ -1,0 +1,5 @@
+@agnes/document-reader@0.1.2 desired=enabled actual=running trusted=true
+@agnes/mcp-helper@0.1.0 desired=enabled actual=running trusted=true
+@agnes/mhs@0.0.0 desired=enabled actual=running trusted=true
+@agnes/plugin-helper@0.1.1 desired=enabled actual=running trusted=true
+@agnes/skill-helper@0.1.1 desired=enabled actual=running trusted=true

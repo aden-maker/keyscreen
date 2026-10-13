@@ -1,0 +1,15 @@
+== keyscreen.service
+NRestarts=0
+ExecMainStartTimestamp=Thu 2019-02-14 18:12:53 CST
+ActiveState=active
+ 18:14:43 up 2 min,  1 user,  load average: 0.38, 0.25, 0.10
+4.19.232-fluxhid
+crw-rw-rw- 1 root root 236, 0 Feb 14 18:12 /dev/hidg0
+fcc00000.dwc3
+== journal (last 5)
+-- Logs begin at Thu 2019-02-14 18:12:46 CST, end at Thu 2019-02-14 18:14:43 CST. --
+2019-02-14T18:12:55+0800 lubancat python3[849]: libGL error: driver pointer missing
+2019-02-14T18:12:55+0800 lubancat python3[849]: libGL error: failed to load driver: rockchip
+2019-02-14T18:12:59+0800 lubancat python3[849]: [api] http://0.0.0.0:8765  client: http://<board-ip>:8765/ui/
+2019-02-14T18:12:59+0800 lubancat python3[849]: [layout] 1u = 128x108 px, keyboard 1920x540 px at (0,540)
+2019-02-14T18:13:00+0800 lubancat python3[849]: [touch] Silicon Integrated System Co. SiS HID Touch Controller 4095x4095

@@ -35,6 +35,11 @@ async def call(method: str, path: str, body: dict | None = None) -> Any:
         raise CallError("unreachable", f"board unreachable: {e}") from None
 
 
+def reply(detail: str, data: Any = None) -> dict:
+    """The model only sees `detail` (hub-api: a dict result keeps detail/data/notes); `data` goes to the Devices page."""
+    return {"detail": detail, **({"data": data} if data is not None else {})}
+
+
 def make_device() -> tuple[Device, Any]:
     dev = Device("keyscreen-01", "display", name="KeyScreen touch keyboard", model="LubanCat 1H + touch display", state={
         "profile": {"type": "string", "writable": True, "description": "active per-app profile"},
@@ -57,7 +62,10 @@ def make_device() -> tuple[Device, Any]:
     @dev.tool("List wallpapers stored on the keyboard and the active profile.", timeout=10)
     async def list_wallpapers(call_: Any) -> dict:
         s = await call("GET", "/api/state")
-        return {"wallpapers": s["wallpapers"], "active": s["active"], "profile": s["profile"], "profiles": s["profiles"]}
+        p = s["profile"]
+        return reply(f"wallpapers: {', '.join(s['wallpapers']) or '(none)'}. active profile {s['active']} "
+                     f"(wallpaper={p.get('wallpaper')}, theme={p.get('theme')}, opacity={p.get('opacity')}). profiles: {', '.join(s['profiles'])}.",
+                     {"wallpapers": s["wallpapers"], "active": s["active"], "profile": p, "profiles": s["profiles"]})
 
     @dev.tool("Set the wallpaper (and optional accent theme colour #rrggbb, key opacity 0-255) of a profile.",
               params={"wallpaper": {"type": "string"}, "profile": {"type": "string"}, "theme": {"type": "string"}, "opacity": {"type": "integer", "minimum": 0, "maximum": 255}},
@@ -66,7 +74,8 @@ def make_device() -> tuple[Device, Any]:
         body = {"wallpaper": wallpaper, **({"theme": theme} if theme else {}), **({"opacity": opacity} if opacity is not None else {})}
         r = await call("PUT", f"/api/profile/{profile or dev.state.get('profile') or 'default'}", body)
         dev.update(wallpaper=wallpaper)
-        return r["profile"]
+        p = r["profile"]
+        return reply(f"applied wallpaper={p.get('wallpaper')} theme={p.get('theme')} opacity={p.get('opacity')} to profile {profile or dev.state.get('profile') or 'default'}", p)
 
     @dev.tool("Create or update a per-app profile: legends maps key label to shown text, modules lists bar items (clock, app, wpm).",
               params={"app": {"type": "string"}, "legends": {"type": "object"}, "modules": {"type": "array", "items": {"type": "string"}}, "activate": {"type": "boolean"}},
@@ -76,13 +85,16 @@ def make_device() -> tuple[Device, Any]:
         r = await call("PUT", f"/api/profile/{app}", body)
         if activate:
             dev.update(profile=app)
-        return r["profile"]
+        p = r["profile"]
+        return reply(f"profile {app} saved: legends={json.dumps(p.get('legends', {}), ensure_ascii=False)} modules={p.get('modules')}{' (activated)' if activate else ''}", p)
 
     @dev.tool("Nudge one key's touch area by dx/dy pixels (each clamped to ±40) to reduce misses.",
               params={"key": {"type": "string"}, "dx": {"type": "number", "minimum": -20, "maximum": 20}, "dy": {"type": "number", "minimum": -20, "maximum": 20}},
               required=["key", "dx", "dy"], timeout=10)
     async def adjust_key(call_: Any, key: str, dx: float, dy: float) -> dict:
-        return await call("POST", "/api/keys/adjust", {"key": key, "dx": dx, "dy": dy})
+        r = await call("POST", "/api/keys/adjust", {"key": key, "dx": dx, "dy": dy})
+        off = r.get("offsets", {}).get(key, r.get("offset"))
+        return reply(f"key {key} nudged by dx={dx} dy={dy}; total offset now {off}", r)
 
     @dev.tool("Per-key touch statistics: count, miss_rate, average offset from key centre (dx, dy px) and press time.",
               params={"since_minutes": {"type": "number", "minimum": 0}}, timeout=10)
@@ -90,13 +102,16 @@ def make_device() -> tuple[Device, Any]:
         since = time.time() - since_minutes * 60 if since_minutes else 0
         r = await call("GET", f"/api/touch/stats?since={since}")
         r["keys"] = r["keys"][:25]
-        return r
+        rows = "; ".join(f"{k['key']}: n={k['count']} miss={k['miss_rate']} dx={k['avg_dx']} dy={k['avg_dy']} hold={k['avg_ms']}ms" for k in r["keys"])
+        return reply(f"total={r['total']} miss_rate={r['miss_rate']} (window {'all' if not since_minutes else f'{since_minutes} min'}). per key: {rows or '(no touches)'}", r)
 
     @dev.tool("Describe the rendered keyboard (size, active profile, wallpaper) to preview a layout change.", timeout=10)
     async def preview_layout(call_: Any) -> dict:
         s = await call("GET", "/api/state")
         png = await call("GET", "/api/screenshot")
-        return {"size": s["size"], "active": s["active"], "wallpaper": s["profile"]["wallpaper"], "theme": s["profile"]["theme"], "screenshot_bytes": len(png), "screenshot_url": BOARD + "/api/screenshot"}
+        d = {"size": s["size"], "keyboard": s.get("keyboard"), "active": s["active"], "wallpaper": s["profile"]["wallpaper"], "theme": s["profile"]["theme"],
+             "offsets": s["profile"].get("offsets", {}), "screenshot_bytes": len(png), "screenshot_url": BOARD + "/api/screenshot"}
+        return reply(f"screen {s['size']}, keyboard area {s.get('keyboard')}, active={s['active']} wallpaper={d['wallpaper']} theme={d['theme']} offsets={d['offsets']}; screenshot {len(png)} bytes at {d['screenshot_url']}", d)
 
     async def poll() -> None:
         while True:

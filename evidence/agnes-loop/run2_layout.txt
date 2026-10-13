@@ -1,0 +1,7 @@
+- tool call_device
+- tool call_device · ok · 37ms
+- tool call_device
+- tool call_device
+- tool call_device · ok · 38ms
+- tool call_device · ok · 72ms
+我调整了 **S** 键：向左 8px、向上 13px；以及 **Shift** 键：向左 14px、向下 20px。选择这两个键是因为在 count≥10 的非 Fn 键中，它们按 |avg_dx|+|avg_dy| 排序偏移最明显：S 约 42.3px，Shift 约 68.2px；移动量都取平均偏移的一半并限制在 ±15px 内。
