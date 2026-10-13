@@ -358,7 +358,7 @@ class Engine:
         if key and hit and self.widgets is not None:
             try:
                 if self.widgets.key(key["label"], x):  # chat box focused: the key goes to Agnes, not to the PC
-                    rec["code"] = 0
+                    rec["code"], rec["chat"] = 0, True
             except Exception as e:
                 print(f"[widgets] key failed: {e!r}", file=sys.stderr)
         self.active[slot] = rec
@@ -397,6 +397,8 @@ class Engine:
         if rec["code"]:
             self.hid.release(rec.pop("code"))
         rec.pop("code", None)
+        if rec.pop("chat", False):
+            self.widgets.key_up(rec["key"])
         self.pressed_view = tuple(r["key"] for r in self.active.values() if r.get("hit"))
         rec["duration"] = round(time.time() - rec["t"], 3)
         if rec["key"] is None:
@@ -500,6 +502,9 @@ class Renderer:
     def __init__(self, store: Store, engine: Engine, sim: bool, headless: bool) -> None:
         if headless:
             os.environ["SDL_VIDEODRIVER"] = "dummy"
+        # No GPU driver on the board: SDL's "accelerated" framebuffer is software GL that re-uploads the whole
+        # 1080p frame on every update (~52 ms). Plain XShm only copies the dirty rects.
+        os.environ.setdefault("SDL_FRAMEBUFFER_ACCELERATION", "0")
         import pygame
 
         self.pg = pg = pygame
@@ -541,6 +546,9 @@ class Renderer:
         self.shot_lock = threading.Lock()
         self.shot_req, self.shot_done = threading.Event(), threading.Event()
         self.shot_raw = b""
+        self.frame_ms: collections.deque = collections.deque(maxlen=300)
+        self.wake = threading.Event()
+        self._cprof, self.prof_n, self.prof_out = None, 0, ""
         engine.on_press = self.effect
         self.widgets = None
         if os.environ.get("KEYSCREEN_WIDGETS", "1") != "0":
@@ -549,6 +557,7 @@ class Renderer:
                 mk = (lambda n: pg.font.Font(fp, n)) if fp else (lambda n: pg.font.Font(None, n + 6))
                 self.widgets = Widgets(pg, store, engine, BAR_H, int(KB_Y), W, mk)
                 engine.widgets = self.widgets
+                self.widgets.wake = self.wake
             except Exception as e:
                 print(f"[widgets] disabled: {e!r}", file=sys.stderr)
 
@@ -722,8 +731,10 @@ class Renderer:
             self.store.dirty = False
             self.rebuild()
             full = True
-        a = self.anim
-        if a and now >= a["next"]:
+        a, wg = self.anim, self.widgets
+        typing = wg is not None and wg.open and time.time() - wg.chat.typed_at < 0.6
+        if a and now >= a["next"] and not (typing and (wg.chat.key_t or now - a.get("t_full", 0) < 0.35)):
+            a["t_full"] = now  # a video frame is a ~50 ms full repaint; while typing in the chat box, keys go first
             a["i"] = (a["i"] + 1) % len(a["frames"])
             a["next"] = (a["next"] if now - a["next"] < 0.5 else now) + 1 / a["fps"]
             pg.transform.scale(a["frames"][a["i"]], (W, H), self.bg)
@@ -809,8 +820,14 @@ class Renderer:
                     self.engine.touch_up(99)
                 elif e.type == pg.MOUSEMOTION and e.buttons[0]:
                     self.engine.touch_move(99, e.pos[0] * self.scale, e.pos[1] * self.scale)
+            if self.prof_n and self._cprof is None:
+                import cProfile
+                self._cprof = cProfile.Profile()
+                self._cprof.enable()
             try:
+                t0 = time.perf_counter()
                 self.frame()
+                self.frame_ms.append((time.perf_counter() - t0) * 1000)
             except Exception as ex:
                 print(f"[render] frame failed, full redraw: {ex!r}", file=sys.stderr)
                 self.live, self.prev, self.store.dirty = [], [], True
@@ -818,7 +835,16 @@ class Renderer:
                 self.shot_raw = pg.image.tostring(pg.transform.scale(self.canvas, (W // 2, H // 2)), "RGB")
                 self.shot_req.clear()
                 self.shot_done.set()
-            clock.tick(60)
+            if self._cprof is not None:
+                self.prof_n -= 1
+                if self.prof_n <= 0:
+                    import io, pstats
+                    self._cprof.disable()
+                    out = io.StringIO()
+                    pstats.Stats(self._cprof, stream=out).sort_stats("tottime").print_stats(18)
+                    self.prof_out, self._cprof = out.getvalue(), None
+            self.wake.wait(max(0.0, 1 / 60 - (time.perf_counter() - t0)))
+            self.wake.clear()
 
 
 def make_app(store: Store, engine: Engine, renderer: Renderer):
@@ -1024,6 +1050,26 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
             return bad("widgets disabled", 503)
         renderer.widgets.set_info(str((await req.json()).get("text", "")))
         return ok()
+
+    @r.get("/api/debug/profile")
+    async def profile(req):
+        """Profile the next N render frames (cProfile, by own time)."""
+        renderer.prof_out, renderer.prof_n = "", int(req.query.get("frames", 150))
+        for _ in range(200):
+            await asyncio.sleep(0.1)
+            if renderer.prof_out:
+                break
+        return web.Response(text=renderer.prof_out or "timeout")
+
+    @r.get("/api/chat/perf")
+    async def chat_perf(req):
+        if renderer.widgets is None:
+            return bad("widgets disabled", 503)
+        p = sorted(renderer.widgets.perf, key=lambda v: v[1])
+        med = lambda i: round(sorted(v[i] for v in p)[len(p) // 2], 1) if p else None
+        f = sorted(renderer.frame_ms)
+        return ok(n=len(p), composite_ms=med(0), key_to_frame_ms=med(1), worst_ms=round(p[-1][1], 1) if p else None,
+                  frame_ms=round(f[len(f) // 2], 1) if f else None, frame_p95_ms=round(f[int(len(f) * 0.95)], 1) if f else None)
 
     @r.post("/api/chat/open")
     async def chat_open(req):

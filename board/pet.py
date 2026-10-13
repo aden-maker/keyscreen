@@ -66,7 +66,7 @@ class Pet:
         self.say_text, self.say_until = "", 0.0
         self.surf = pg.Surface((SW, SH))  # opaque + colorkey: gfxdraw AA on SRCALPHA leaves seams where shapes overlap
         self.surf.set_colorkey(KEY)
-        self._img, self._rt = self.surf, 0.0
+        self._img, self._rt, self._bub = self.surf, 0.0, (None, None)
         self.zfont = None
 
     # ---------- control ----------
@@ -471,15 +471,18 @@ class Pet:
         lines = wrap(font, text, 560)[:3]
         if not lines or not text:
             return []
-        lh = font.get_height() + 4
-        w = max(font.size(l)[0] for l in lines) + 40
-        h = len(lines) * lh + 26
+        if self._bub[0] != text:
+            lh = font.get_height() + 4
+            w = max(font.size(l)[0] for l in lines) + 40
+            box = pg.Surface((w, len(lines) * lh + 26), pg.SRCALPHA)
+            pg.draw.rect(box, (255, 255, 255, 255), box.get_rect(), border_radius=22)
+            for i, l in enumerate(lines):
+                box.blit(font.render(l, True, (80, 50, 90)), (20, 13 + i * lh))
+            self._bub = (text, box)
+        box = self._bub[1]
+        w, h = box.get_size()
         x = int(min(max(16, self.x - w / 2), 1900 - w))
         y = max(96, int(self.y - 268 - h))
-        box = pg.Surface((w, h + 16), pg.SRCALPHA)
-        pg.draw.rect(box, (255, 255, 255, 235), (0, 0, w, h), border_radius=22)
-        tip = max(24, min(w - 24, int(self.x - x)))
-        pg.draw.polygon(box, (255, 255, 255, 235), [(tip - 12, h - 1), (tip + 12, h - 1), (tip, h + 15)])
-        for i, l in enumerate(lines):
-            box.blit(font.render(l, True, (80, 50, 90)), (20, 13 + i * lh))
-        return [canvas.blit(box, (x, y))]
+        tip = x + max(24, min(w - 24, int(self.x - x)))
+        r = canvas.blit(box, (x, y))
+        return [r, pg.draw.polygon(canvas, (255, 255, 255), [(tip - 12, y + h - 1), (tip + 12, y + h - 1), (tip, y + h + 15)])]

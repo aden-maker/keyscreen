@@ -27,6 +27,10 @@ if [ -e /var/run/lightdm/root/:0 ] || pgrep -x Xorg >/dev/null; then
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/var/run/lightdm/root/:0
 ExecStartPre=-/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do [ -e /tmp/.X11-unix/X0 ] && exit 0; sleep 1; done'"
+  # xfwm4's software compositor re-composites the whole 1080p screen on every update (~48 ms -> ~27 ms without it)
+  P=$(pgrep xfwm4 | head -1)
+  [ -n "$P" ] && sudo -u "$(ps -o user= -p "$P")" env $(tr '\0' '\n' < /proc/"$P"/environ | grep -E '^(DBUS_SESSION_BUS_ADDRESS|DISPLAY|XAUTHORITY|HOME)=') \
+    xfconf-query -c xfwm4 -p /general/use_compositing -s false && pass "xfwm4 compositor off"
 else
   VIDEO="Environment=SDL_VIDEODRIVER=kmsdrm"
 fi

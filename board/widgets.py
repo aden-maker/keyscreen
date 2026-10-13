@@ -6,6 +6,7 @@ Keys go to the chat box only while it is open; closed, every key goes to the PC.
 
 from __future__ import annotations
 
+import collections
 import math
 import random
 import threading
@@ -60,6 +61,7 @@ class Chat:
         self.dirty, self.next_id, self.typed_at = True, 1, 0.0
         self.ime, self.zh, self.py, self.page = None, True, "", 0  # Chinese pinyin input by default
         self._cands = ("", [])
+        self.key_t = 0.0
 
     def send(self, prompt: str) -> dict:
         prompt = prompt.strip()
@@ -114,7 +116,7 @@ class Chat:
         self.dirty = True
 
     def key(self, label: str) -> None:
-        self.typed_at = time.time()
+        self.typed_at, self.key_t = time.time(), time.perf_counter()
         self.dirty = True
         if label in ("Shift", "RShift"):
             self.text, self.py, self.zh = self.text + self.py, "", not self.zh
@@ -182,7 +184,14 @@ class Widgets:
         self.open, self.anim, self.layer_on = False, 0.0, False
         self.chips: list = []
         self.send_rect = None
-        self.cache = None
+        self.cache = self.glass = self.glass_acc = None
+        bw, bh = self.box.size
+        self.zones = {"top": pg.Rect(0, 0, bw, bh - 122), "row": pg.Rect(0, bh - 122, bw, 50), "in": pg.Rect(0, bh - 72, bw, 72)}
+        self.sigs: dict = {}
+        self._memo: dict = {}
+        self.wake = None  # threading.Event set by the Renderer: a chat key wakes the frame loop early
+        self.held = None  # [label, next repeat time] for typematic Bksp/Space
+        self.perf = collections.deque(maxlen=100)  # (composite ms, key -> composited ms)
         self.last, self.caret_on, self.caret_t = time.time(), True, 0.0
         self.info, self.info_surf, self.unread = "", None, False
         self.seen_reply = 0
@@ -197,7 +206,8 @@ class Widgets:
         if v:
             self.unread = False
         self.pet.x1 = (self.box.left - 120) if v else self.W - 220
-        self.pet.say("有什么想让我做的吗？" if v else "那我先去玩啦~", 2)
+        if not v:
+            self.pet.say("那我先去玩啦~", 2)
         if v and self.pet.on_ground():
             self.pet.set_mode("wave", 1.5)
 
@@ -253,99 +263,197 @@ class Widgets:
             self.set_open(False)
         else:
             self.chat.key(label)
+            self.caret_on, self.caret_t = True, 0.0
+            self.held = [label, time.time() + 0.45] if label in ("Bksp", "Space") else None
+        if self.wake is not None:
+            self.wake.set()
         return True
 
+    def key_up(self, label: str) -> None:
+        if self.held and self.held[0] == label:
+            self.held = None
+
     # -- drawing --
-    def _render_box(self, accent) -> None:
-        pg, c, f, tf = self.pg, self.chat, self.font, self.tiny
+    # The box is cached as three zones (header+history, chip/candidate row, input line) composited over a glass layer;
+    # a keystroke only recomposites the small zones it changed, and the Renderer restores just those rects.
+    def _glass(self, accent) -> None:
+        pg = self.pg
         bw, bh = self.box.size
-        s = pg.Surface((bw, bh), pg.SRCALPHA)
-        for i in range(12):  # feathered glass, no outline
-            pg.draw.rect(s, (22, 14, 42, 13), (i * 3, i * 3, bw - i * 6, bh - i * 6), border_radius=34)
-        s.blit(shadow_text(pg, f, "Agnes 助手", accent), (34, 22))
-        st = "思考中…" if c.busy else "Shift 中/英 · 空格/数字选字 · Enter 发送 · Esc 收起"
-        t = shadow_text(pg, tf, st, (225, 215, 240))
-        s.blit(t, (bw - t.get_width() - 34, 28))
-        y_in, lh = bh - 70, tf.get_height() + 4
-        y_chip = y_in - 52
-        lines: list = []
-        for it in c.items[-4:]:
-            lines += [("you", l) for l in wrap(tf, "你：" + it["prompt"], bw - 80)[:2]]
+        g = pg.Surface((bw, bh), pg.SRCALPHA)
+        a = tuple(accent)[:3]
+        for y in range(bh):
+            u = y / bh
+            g.fill((int(34 + a[0] * 0.10 * (1 - u)), int(22 + a[1] * 0.06 * (1 - u)), int(58 + a[2] * 0.10 * (1 - u)), int(150 + 40 * u)), (0, y, bw, 1))
+        g.fill((255, 255, 255, 16), (40, 2, bw - 80, 1))
+        m = pg.Surface((bw // 8, bh // 8), pg.SRCALPHA)  # feathered rounded mask: drawn small, scaled up soft
+        pg.draw.rect(m, (255, 255, 255, 255), m.get_rect().inflate(-2, -2), border_radius=4)
+        g.blit(pg.transform.smoothscale(m, (bw, bh)), (0, 0), special_flags=pg.BLEND_RGBA_MULT)
+        self.glass, self.glass_acc = g, a
+        self.cache = g.copy()
+        self.sigs = {}
+
+    def _zone(self, name: str, content) -> None:
+        z = self.zones[name]
+        self.cache.fill((0, 0, 0, 0), z)
+        self.cache.blit(self.glass, z.topleft, z)
+        self.cache.blit(content, z.topleft)
+
+    def _bubble(self, lines: list, fg, bg) -> object:
+        pg, tf = self.pg, self.tiny
+        lh = tf.get_height() + 2
+        w = max(tf.size(l)[0] for l in lines) + 30
+        s = pg.Surface((w, len(lines) * lh + 18), pg.SRCALPHA)
+        pg.draw.rect(s, bg, s.get_rect(), border_radius=18)
+        for i, l in enumerate(lines):
+            s.blit(tf.render(l, True, fg), (15, 9 + i * lh))
+        return s
+
+    def _render_top(self, accent) -> None:
+        pg, c, f, tf = self.pg, self.chat, self.font, self.tiny
+        z = self.zones["top"]
+        s = pg.Surface(z.size, pg.SRCALPHA)
+        a = tuple(accent)[:3]
+        pg.draw.circle(s, (*a, 255), (50, 30), 19)  # avatar: tiny Agnes face
+        pg.draw.circle(s, (255, 236, 226), (50, 33), 13)
+        pg.draw.ellipse(s, (190, 156, 255), (36, 15, 28, 12))
+        for ex in (45, 55):
+            pg.draw.circle(s, (52, 58, 120), (ex, 34), 3)
+        pg.draw.arc(s, (200, 80, 110), (46, 35, 9, 6), 3.5, 6.0, 2)
+        t = shadow_text(pg, f, "Agnes", (255, 255, 255))
+        s.blit(t, (80, 30 - t.get_height() // 2))
+        x, busy = 80 + t.get_width() + 14, c.busy
+        pg.draw.circle(s, (255, 200, 90) if busy else (120, 230, 160), (x, 31), 5)
+        t = tf.render("思考中…" if busy else "在线 · agnes-3.0-flash", True, (215, 205, 235))
+        s.blit(t, (x + 12, 31 - t.get_height() // 2))
+        t = tf.render("Shift 中/英 · Enter 发送 · Esc 收起", True, (190, 180, 215))
+        s.blit(t, (z.w - t.get_width() - 34, 31 - t.get_height() // 2))
+        maxw, y = int(z.w * 0.72), z.h - 4
+        for it in reversed(c.items[-6:]):
             if it["status"] in ("done", "error"):
-                lines += [("ag", l) for l in wrap(tf, "Agnes：" + (it["reply"] or "(无回复)"), bw - 80)[:4]]
+                ls = wrap(tf, it["reply"] or "(无回复)", maxw)
+                ls = ls[:4] if len(ls) <= 4 else ls[:3] + [ls[3][:-1] + "…"]
             else:
-                lines += [("ag", "Agnes：" + ("…正在读取设备、思考" if it["status"] == "running" else "排队中"))]
-        y = 66
-        for who, l in lines[-max(1, (y_chip - 70) // lh):]:
-            s.blit(shadow_text(pg, tf, l, (255, 255, 255) if who == "you" else (255, 205, 232)), (34, y))
-            y += lh
-        self.chips, x = [], 34
-        if c.py:  # composing: the chip row becomes the candidate row
-            t = shadow_text(pg, f, c.py, (255, 255, 255))
-            s.blit(t, (x, y_chip + (40 - t.get_height()) // 2))
-            x += t.get_width() + 18
+                ls = ["正在读取设备、思考…" if it["status"] == "running" else "排队中…"]
+            for b, right in ((self._bubble(ls, (70, 50, 90), (255, 255, 255, 228)), False),
+                             (self._bubble(wrap(tf, it["prompt"], maxw)[:3], (60, 30, 70), (*a, 225)), True)):
+                y -= b.get_height() + 6
+                if y < 56:
+                    break
+                s.blit(b, (z.w - 34 - b.get_width() if right else 34, y))
+            if y < 56:
+                break
+        if not c.items:
+            t = tf.render("嗨～我是 Agnes。打字或点下面的快捷指令，我会帮你操控键盘～", True, (225, 215, 240))
+            s.blit(t, ((z.w - t.get_width()) // 2, z.h // 2 + 10))
+        self._zone("top", s)
+
+    def _render_row(self, accent) -> None:
+        pg, c, f, tf = self.pg, self.chat, self.font, self.tiny
+        z = self.zones["row"]
+        s = pg.Surface(z.size, pg.SRCALPHA)
+        a = tuple(accent)[:3]
+        self.chips, x, cy = [], 34, z.h // 2
+        if c.py:  # composing: PC-style candidate strip
+            t = f.render(c.py, True, (*a,))
+            s.blit(t, (x, cy - t.get_height() // 2))
+            x += t.get_width() + 16
             cands = c.cands
             for i, (w, _) in enumerate(cands[c.page * PAGE:(c.page + 1) * PAGE]):
-                t = tf.render(f"{i + 1}.{w}", True, (60, 30, 70))
-                r = pg.Rect(x, y_chip, t.get_width() + 26, 40)
-                pg.draw.rect(s, (*tuple(accent)[:3], 235 if i == 0 else 150), r, border_radius=20)
-                s.blit(t, (r.x + 13, r.y + (40 - t.get_height()) // 2))
-                self.chips.append((r.move(self.box.topleft), c.page * PAGE + i))
-                x += r.w + 10
+                t = f.render(w, True, (60, 30, 70) if i == 0 else (255, 255, 255))
+                n = tf.render(str(i + 1), True, (60, 30, 70) if i == 0 else (200, 190, 225))
+                r = pg.Rect(x, cy - 20, n.get_width() + t.get_width() + 30, 40)
+                if i == 0:
+                    pg.draw.rect(s, (*a, 240), r, border_radius=20)
+                s.blit(n, (r.x + 12, cy - n.get_height() // 2 + 1))
+                s.blit(t, (r.x + 18 + n.get_width(), cy - t.get_height() // 2))
+                self.chips.append((r.move(self.box.x, self.box.y + z.y), c.page * PAGE + i))
+                x += r.w + 6
             if len(cands) > PAGE:
-                s.blit(shadow_text(pg, tf, "- / = 翻页", (225, 215, 240)), (x + 6, y_chip + 8))
+                t = tf.render(f"- = 翻页  {c.page + 1}/{(len(cands) + PAGE - 1) // PAGE}", True, (200, 190, 225))
+                s.blit(t, (z.w - 34 - t.get_width(), cy - t.get_height() // 2))
         else:
             for label, prompt in PRESETS:
-                t = tf.render(label, True, (60, 30, 70))
-                r = pg.Rect(x, y_chip, t.get_width() + 30, 40)
-                pg.draw.rect(s, (*tuple(accent)[:3], 215), r, border_radius=20)
-                s.blit(t, (r.x + 15, r.y + (40 - t.get_height()) // 2))
-                self.chips.append((r.move(self.box.topleft), prompt))
-                x += r.w + 12
-        inp = pg.Rect(34, y_in, bw - 68 - 124, 50)
-        pg.draw.rect(s, (255, 255, 255, 200), inp, border_radius=25)
+                t = tf.render(label, True, (255, 255, 255))
+                r = pg.Rect(x, cy - 19, t.get_width() + 30, 38)
+                pg.draw.rect(s, (255, 255, 255, 38), r, border_radius=19)
+                s.blit(t, (r.x + 15, cy - t.get_height() // 2))
+                self.chips.append((r.move(self.box.x, self.box.y + z.y), prompt))
+                x += r.w + 10
+        self._zone("row", s)
+
+    def _render_input(self, accent) -> None:
+        pg, c, f, tf = self.pg, self.chat, self.font, self.tiny
+        z = self.zones["in"]
+        s = pg.Surface(z.size, pg.SRCALPHA)
+        a = tuple(accent)[:3]
+        inp = pg.Rect(34, 6, z.w - 68 - 66, 52)
+        pg.draw.rect(s, (255, 255, 255, 222), inp, border_radius=26)
+        pg.draw.circle(s, (*a, 255), (inp.right - 28, inp.centery), 17)
         t = tf.render("中" if c.zh else "英", True, (255, 255, 255))
-        pg.draw.circle(s, (*tuple(accent)[:3], 255), (inp.right - 27, inp.centery), 18)
-        s.blit(t, (inp.right - 27 - t.get_width() // 2, inp.centery - t.get_height() // 2))
-        inp.width -= 44
-        txt = c.text if c.text else ("" if c.focused else "在这里打字…")
-        t = f.render(txt + ("|" if c.focused and self.caret_on else ""), True, (50, 35, 70))
-        s.set_clip(inp.inflate(-30, 0))
-        s.blit(t, (max(inp.x + 18, inp.right - 18 - t.get_width()), inp.y + (50 - t.get_height()) // 2))
-        s.set_clip(None)
-        sr = pg.Rect(inp.right + 14, y_in, 110, 50)
-        pg.draw.rect(s, (*tuple(accent)[:3], 230), sr, border_radius=25)
-        t = f.render("发送", True, (60, 30, 70))
-        s.blit(t, (sr.centerx - t.get_width() // 2, sr.centery - t.get_height() // 2))
-        self.send_rect = sr.move(self.box.topleft)
-        self.cache = s
-        c.dirty = False
+        s.blit(t, (inp.right - 28 - t.get_width() // 2, inp.centery - t.get_height() // 2))
+        field = pg.Rect(inp.x + 22, inp.y, inp.w - 70, inp.h)
+        if c.text:
+            t = f.render(c.text, True, (50, 35, 70))
+            tx = min(field.x, field.right - t.get_width() - 4)
+            s.set_clip(field)
+            s.blit(t, (tx, field.centery - t.get_height() // 2))
+            s.set_clip(None)
+            cx = tx + t.get_width() + 2
+        else:
+            t = f.render("和 Agnes 说点什么…", True, (170, 155, 190))
+            s.blit(t, (field.x + 8, field.centery - t.get_height() // 2))
+            cx = field.x
+        if c.focused and self.caret_on:
+            pg.draw.rect(s, (*a, 255), (cx, field.centery - 15, 3, 30), border_radius=1)
+        sc = (inp.right + 40, inp.centery)
+        pg.draw.circle(s, (*a, 255), sc, 26)
+        pg.draw.polygon(s, (255, 255, 255), [(sc[0] - 10, sc[1] - 11), (sc[0] + 13, sc[1]), (sc[0] - 10, sc[1] + 11), (sc[0] - 5, sc[1])])
+        self.send_rect = pg.Rect(sc[0] - 30, sc[1] - 30, 60, 60).move(self.box.x, self.box.y + z.y)
+        self._zone("in", s)
 
     def prepare(self, accent) -> object:
         """State + cached surfaces. Returns a rect the Renderer must restore (box layer appeared/changed/vanished)."""
-        now = time.time()
+        pg, now = self.pg, time.time()
         dt, self.last = min(0.1, now - self.last), now
         self.caret_t += dt
-        if self.caret_t > 0.5:
+        if self.caret_t > 0.53:
             self.caret_t, self.caret_on = 0.0, not self.caret_on
-            if self.open:
-                self.chat.dirty = True
+        if self.held and now >= self.held[1]:
+            self.held[1] = now + 0.033  # typematic: 450 ms delay, ~30 repeats/s
+            self.chat.key(self.held[0])
+            self.caret_on, self.caret_t = True, 0.0
         if self.open and not self.chat.busy and now - self.chat.typed_at > 60:
             self.set_open(False)
         last = self.chat.last_reply()
         if last and last["id"] != self.seen_reply:
             self.seen_reply = last["id"]
-            self.pet.say(last["reply"], 25)
+            if self.open:  # the reply is already in the box; a bubble would cover it
+                self.pet.act("cheer")
+            else:
+                self.pet.say(last["reply"], 25)
             self.unread = not self.open
         self.pet.update(dt, self.chat.busy)
-        dirty = None
-        if self.chat.dirty or self.cache is None:
-            self._render_box(accent)
-            if self.layer_on:
-                dirty = self.box
+        c = self.chat
+        if self.cache is None or tuple(accent)[:3] != self.glass_acc:
+            self._glass(accent)
+        t0 = time.perf_counter()
+        sigs = {"top": (tuple((it["id"], it["status"], len(it["reply"])) for it in c.items), c.busy),
+                "row": (c.py, c.page, len(c.cands) if c.py else 0),
+                "in": (c.text, c.zh, c.focused, self.caret_on)}
+        changed = None
+        for name, render in (("top", self._render_top), ("row", self._render_row), ("in", self._render_input)):
+            if sigs[name] != self.sigs.get(name):
+                self.sigs[name] = sigs[name]
+                render(accent)
+                z = self.zones[name].move(self.box.topleft)
+                changed = z if changed is None else changed.union(z)
+        if changed is not None and c.key_t:
+            self.perf.append(((time.perf_counter() - t0) * 1000, (time.perf_counter() - c.key_t) * 1000))
+            c.key_t = 0.0
+        dirty = changed if self.layer_on else None
         target = 1.0 if self.open else 0.0
         if self.anim != target:
-            self.anim = min(1.0, self.anim + dt / 0.32) if self.open else max(0.0, self.anim - dt / 0.25)
+            self.anim = min(1.0, self.anim + dt / 0.28) if self.open else max(0.0, self.anim - dt / 0.22)
         if self.layer_on and not self.open:
             self.layer_on, dirty = False, self.box
         elif self.open and self.anim >= 1.0 and not self.layer_on:
@@ -372,11 +480,25 @@ class Widgets:
             rects += self.pet.bubble(canvas, self.tiny, self.pet.say_text, False)
         mood = "zzz…" if self.pet.mode == "sleep" else (f"{wpm:.0f} WPM · 误触 {miss_rate * 100:.0f}%" if wpm else "")
         if mood:
-            t = shadow_text(pg, self.tiny, mood, (255, 255, 255))
-            mx = int(self.pet.x + 100 if self.pet.dir > 0 else self.pet.x - 100 - t.get_width())
+            t = self.memo(("mood", mood), lambda: shadow_text(pg, self.tiny, mood, (255, 255, 255)))
+            mx = int(self.pet.x + 100 if self.pet.dir > 0 or self.pet.x - 110 - t.get_width() < 0 else self.pet.x - 100 - t.get_width())
             rects.append(canvas.blit(t, (mx, int(self.pet.y) - 150)))
-        cx, cy, r = self.toggle  # toggle: soft glowing orb, no outline
-        pulse = (math.sin(now * 4) + 1) / 2 if (self.chat.busy or self.unread) else 0
+        cx, cy, r = self.toggle
+        pulse = round((math.sin(now * 4) + 1) / 2 * 8) / 8 if (self.chat.busy or self.unread) else 0
+        s = self.memo(("orb", self.open, self.unread, pulse, tuple(accent)[:3]), lambda: self._orb(accent, pulse))
+        rects.append(canvas.blit(s, (cx - r * 2, cy - r * 2)))
+        return rects
+
+    def memo(self, key, build):
+        if key not in self._memo:
+            if len(self._memo) > 64:
+                self._memo.clear()
+            self._memo[key] = build()
+        return self._memo[key]
+
+    def _orb(self, accent, pulse: float):
+        """Toggle: soft glowing orb, no outline."""
+        pg, r = self.pg, self.toggle[2]
         s = pg.Surface((r * 4, r * 4), pg.SRCALPHA)
         c = r * 2
         for i in range(6):
@@ -392,5 +514,4 @@ class Widgets:
                 pg.draw.circle(s, (*tuple(accent)[:3], 255), (c + k, c - 2), 3)
             if self.unread:
                 pg.draw.circle(s, (255, 90, 120), (c + r - 6, c - r + 6), 8)
-        rects.append(canvas.blit(s, (cx - c, cy - c)))
-        return rects
+        return s
