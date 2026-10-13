@@ -12,6 +12,8 @@ import threading
 import time
 from pathlib import Path
 
+from pet import Pet
+
 ASSETS = Path(__file__).resolve().parent / "assets"
 PRESETS = [  # (chip label, prompt)
     ("二次元模式", "用 keyscreen-01 的 list_wallpapers 看键盘上有哪些壁纸，选一张最有二次元/活泼感觉的，用 set_wallpaper 应用到 default profile，主题色选粉色或天蓝色系。一句话说明理由。"),
@@ -117,152 +119,6 @@ class Chat:
         self.dirty = True
 
 
-class Pet:
-    """Sprite pet: breathes, walks with a bounce, jumps (with hearts) when tapped, spins on double tap,
-    walks to where you tap, cheers when you type, sways while Agnes thinks, dozes after 2 minutes idle."""
-
-    def __init__(self, pg, x0: int, x1: int, floor: int) -> None:
-        self.pg, self.x0, self.x1, self.floor = pg, x0, x1, floor
-        self.x = self.tx = (x0 + x1) / 2
-        self.dir = -1  # sprite art faces left
-        self.state, self.until, self.t = "idle", time.time() + 2, 0.0
-        self.jump, self.spin, self.last_key, self.last_tap = 0.0, 0.0, time.time(), 0.0
-        self.hearts: list = []
-        self.say_text, self.say_until = "", 0.0
-        self.frames = self._load()
-
-    def _load(self) -> dict:
-        pg = self.pg
-        try:
-            base = pg.image.load(str(ASSETS / "agnes.png")).convert_alpha()
-        except Exception:
-            base = pg.Surface((160, 280), pg.SRCALPHA)
-            pg.draw.ellipse(base, (199, 166, 255), (10, 0, 140, 140))
-            pg.draw.rect(base, (255, 143, 200), (40, 130, 80, 140), border_radius=30)
-        f = {}
-        for d in (-1, 1):
-            img = base if d == -1 else pg.transform.flip(base, True, False)
-            for tilt in (-5, 0, 5):
-                f[(d, tilt, 0)] = img if tilt == 0 else pg.transform.rotozoom(img, tilt, 1)
-            w, h = img.get_size()
-            f[(d, 0, 1)] = pg.transform.smoothscale(img, (int(w * 1.08), int(h * 0.9)))  # squash on landing
-            dim = img.copy()
-            dim.fill((150, 150, 190, 255), special_flags=pg.BLEND_RGBA_MULT)
-            f[(d, 0, 2)] = dim  # dozing
-        return f
-
-    def hit(self, x: float, y: float) -> bool:
-        return abs(x - self.x) < 100 and self.floor - 310 < y < self.floor
-
-    def tap(self) -> None:
-        now = time.time()
-        if now - self.last_tap < 0.4:
-            self.spin = 0.7
-            self.say("转圈圈~", 2)
-        else:
-            self.jump = 1.0
-            self.say(random.choice(TAP_LINES), 2.5)
-        self.last_tap = self.last_key = now
-        for _ in range(6):
-            self.hearts.append([self.x + random.uniform(-60, 60), self.floor - 260, random.uniform(-40, 40), random.uniform(120, 200), 0.0])
-
-    def goto(self, x: float) -> None:
-        self.tx = max(self.x0, min(self.x1, x))
-        self.dir = 1 if self.tx > self.x else -1
-        self.state, self.last_key = "walk", time.time()
-
-    def poke(self) -> None:
-        self.last_key = time.time()
-        if self.jump <= 0 and self.state != "walk":
-            self.jump = 0.5
-
-    def say(self, text: str, secs: float) -> None:
-        self.say_text, self.say_until = text, time.time() + secs
-
-    def update(self, dt: float, thinking: bool) -> None:
-        now = time.time()
-        self.t += dt
-        self.tx = max(self.x0, min(self.x1, self.tx))
-        if self.x > self.x1 + 1 or self.x < self.x0 - 1:
-            self.goto(self.x)
-        if thinking:
-            self.state = "think"
-        elif now - self.last_key > 120:
-            self.state = "sleep"
-        elif self.state in ("think", "sleep"):
-            self.state, self.until = "idle", now + 1
-        if self.state == "idle" and now > self.until:
-            self.goto(random.uniform(self.x0, self.x1))
-        if self.state == "walk":
-            step = 170 * dt
-            if abs(self.tx - self.x) <= step:
-                self.x, self.state, self.until = self.tx, "idle", now + random.uniform(2, 6)
-            else:
-                self.x += step * self.dir
-        self.jump = max(0.0, self.jump - dt * 1.8)
-        if self.spin > 0:
-            self.spin -= dt
-            self.dir = -1 if int(self.spin / 0.09) % 2 else 1
-        for h in self.hearts:
-            h[0] += h[2] * dt
-            h[1] -= h[3] * dt
-            h[4] += dt
-        self.hearts = [h for h in self.hearts if h[4] < 1.2]
-
-    def draw(self, canvas) -> list:
-        pg, t = self.pg, self.t
-        lift, squash, tilt = 0.0, 0, 0
-        if self.jump > 0:
-            p = 1 - self.jump
-            lift = math.sin(min(1, p * 1.25) * math.pi) * 70
-            squash = 1 if p > 0.85 else 0
-        elif self.state == "walk":
-            lift = abs(math.sin(t * 8)) * 10
-            tilt = 5 if math.sin(t * 8) > 0.3 else (-5 if math.sin(t * 8) < -0.3 else 0)
-        elif self.state == "think":
-            tilt = 5 if math.sin(t * 2.5) > 0.4 else (-5 if math.sin(t * 2.5) < -0.4 else 0)
-        breathe = math.sin(t * 2.2) * 3 if self.state != "walk" else 0
-        img = self.frames[(self.dir, 0, 2)] if self.state == "sleep" else self.frames.get((self.dir, tilt if not squash else 0, squash))
-        rects = []
-        sh = pg.Surface((120, 22), pg.SRCALPHA)
-        pg.draw.ellipse(sh, (0, 0, 0, max(20, 70 - int(lift))), sh.get_rect())
-        rects.append(canvas.blit(sh, (int(self.x - 60), self.floor - 14)))
-        rects.append(canvas.blit(img, (int(self.x - img.get_width() / 2), int(self.floor - img.get_height() - lift + breathe))))
-        for hx, hy, _, _, age in self.hearts:
-            a = max(0, 255 - int(age * 210))
-            s = pg.Surface((26, 24), pg.SRCALPHA)
-            c = (255, 120, 180, a)
-            pg.draw.circle(s, c, (7, 8), 7)
-            pg.draw.circle(s, c, (19, 8), 7)
-            pg.draw.polygon(s, c, [(0, 10), (26, 10), (13, 24)])
-            rects.append(canvas.blit(s, (int(hx), int(hy))))
-        if self.state == "sleep":
-            for i in range(3):
-                z = shadow_text(pg, self.zfont, "z", (230, 230, 255))
-                rects.append(canvas.blit(z, (int(self.x + 50 + i * 16), int(self.floor - 300 - i * 20 - (t * 18 % 20)))))
-        return rects
-
-    def bubble(self, canvas, font, text: str, thinking: bool) -> list:
-        pg = self.pg
-        if thinking:
-            text = "·" * (1 + int(self.t * 3) % 3) + " 思考中"
-        lines = wrap(font, text, 560)[:3]
-        if not lines or not text:
-            return []
-        lh = font.get_height() + 4
-        w = max(font.size(l)[0] for l in lines) + 40
-        h = len(lines) * lh + 26
-        x = int(min(max(16, self.x - w / 2), 1900 - w))
-        y = max(96, int(self.floor - 320 - h))
-        box = pg.Surface((w, h + 16), pg.SRCALPHA)
-        pg.draw.rect(box, (255, 255, 255, 235), (0, 0, w, h), border_radius=22)
-        tip = max(24, min(w - 24, int(self.x - x)))
-        pg.draw.polygon(box, (255, 255, 255, 235), [(tip - 12, h - 1), (tip + 12, h - 1), (tip, h + 15)])
-        for i, l in enumerate(lines):
-            box.blit(font.render(l, True, (80, 50, 90)), (20, 13 + i * lh))
-        return [canvas.blit(box, (x, y))]
-
-
 class Widgets:
     def __init__(self, pg, store, engine, bar_h: int, kb_y: int, w: int, mkfont) -> None:
         self.pg, self.store, self.engine, self.W = pg, store, engine, w
@@ -291,11 +147,27 @@ class Widgets:
             self.unread = False
         self.pet.x1 = (self.box.left - 120) if v else self.W - 220
         self.pet.say("有什么想让我做的吗？" if v else "那我先去玩啦~", 2)
+        if v and self.pet.on_ground():
+            self.pet.set_mode("wave", 1.5)
 
     def set_info(self, text: str) -> None:
         self.info, self.info_surf = text[:120], None
 
     # -- input --
+    def down(self, slot, x: float, y: float) -> None:
+        if self.pet.drag is None and self.pet.hit(x, y) and not (self.open and self.box.collidepoint(x, y)):
+            self.pet.grab(slot, x, y)
+        else:
+            self.tap(x, y)
+
+    def move(self, slot, x: float, y: float) -> None:
+        if self.pet.drag and self.pet.drag["slot"] == slot:
+            self.pet.drag_to(x, y)
+
+    def up(self, slot) -> None:
+        if self.pet.drag and self.pet.drag["slot"] == slot:
+            self.pet.release()
+
     def tap(self, x: float, y: float) -> None:
         cx, cy, r = self.toggle
         if (x - cx) ** 2 + (y - cy) ** 2 <= (r + 18) ** 2:
@@ -423,11 +295,11 @@ class Widgets:
             rects += self.pet.bubble(canvas, self.tiny, "", True)
         elif now < self.pet.say_until:
             rects += self.pet.bubble(canvas, self.tiny, self.pet.say_text, False)
-        mood = "zzz…" if self.pet.state == "sleep" else (f"{wpm:.0f} WPM · 误触 {miss_rate * 100:.0f}%" if wpm else "")
+        mood = "zzz…" if self.pet.mode == "sleep" else (f"{wpm:.0f} WPM · 误触 {miss_rate * 100:.0f}%" if wpm else "")
         if mood:
             t = shadow_text(pg, self.tiny, mood, (255, 255, 255))
             mx = int(self.pet.x + 100 if self.pet.dir > 0 else self.pet.x - 100 - t.get_width())
-            rects.append(canvas.blit(t, (mx, self.pet.floor - 160)))
+            rects.append(canvas.blit(t, (mx, int(self.pet.y) - 150)))
         cx, cy, r = self.toggle  # toggle: soft glowing orb, no outline
         pulse = (math.sin(now * 4) + 1) / 2 if (self.chat.busy or self.unread) else 0
         s = pg.Surface((r * 4, r * 4), pg.SRCALPHA)

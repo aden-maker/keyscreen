@@ -120,6 +120,13 @@ def make_device() -> tuple[Device, Any]:
         await call("POST", "/api/pet/say", {"text": text, "secs": seconds})
         return reply(f"desk pet says: {text}")
 
+    @dev.tool("Make the Agnes desk pet do an action: jump, run, wave, dance, sit, spin or cheer.",
+              params={"action": {"type": "string", "enum": ["jump", "run", "wave", "dance", "sit", "spin", "cheer"]}},
+              required=["action"], timeout=10)
+    async def pet_act(call_: Any, action: str) -> dict:
+        await call("POST", "/api/pet/act", {"action": action})
+        return reply(f"desk pet: {action}")
+
     async def poll() -> None:
         while True:
             try:

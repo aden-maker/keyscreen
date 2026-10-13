@@ -349,7 +349,7 @@ class Engine:
         if y < KB_Y and self.widgets is not None:
             self.active[slot] = {"bar": True, "x": x, "widget": True}
             try:
-                self.widgets.tap(x, y)
+                self.widgets.down(slot, x, y)
             except Exception as e:
                 print(f"[widgets] tap failed: {e!r}", file=sys.stderr)
             return
@@ -370,12 +370,26 @@ class Engine:
             self.typed = [t for t in self.typed if t > t0 - 60] + [t0]
             self.on_press(key["label"], x, y)
 
+    def touch_move(self, slot: int, x: float, y: float) -> None:
+        """Only the top-area widgets care about motion (dragging the pet); keys stay make/break."""
+        rec = self.active.get(slot)
+        if rec and rec.get("widget"):
+            try:
+                self.widgets.move(slot, x, y)
+            except Exception as e:
+                print(f"[widgets] move failed: {e!r}", file=sys.stderr)
+
     def touch_up(self, slot: int) -> dict | None:
         rec = self.active.pop(slot, None)
         if rec is None:
             return None
         if rec.get("bar"):
-            if not rec.get("widget"):
+            if rec.get("widget"):
+                try:
+                    self.widgets.up(slot)
+                except Exception as e:
+                    print(f"[widgets] up failed: {e!r}", file=sys.stderr)
+            else:
                 self.store.emit({"type": "bar", "x": rec["x"]})
             return None
         self.n_touch += 1
@@ -438,7 +452,7 @@ def _touch_session(dev, engine: Engine, stop: threading.Event, E) -> None:
     except OSError as e:
         print(f"[touch] grab failed ({e}); another process may own the touchscreen", file=sys.stderr)
     print(f"[touch] {dev.name} {ax.max}x{ay.max}", file=sys.stderr)
-    slot, pos, downs, ups = 0, {}, set(), set()
+    slot, pos, downs, ups, moves = 0, {}, set(), set(), set()
     # MT protocol B: a new contact's TRACKING_ID arrives before its X/Y, so act on SYN_REPORT, not on the ID.
     for ev in dev.read_loop():
         if stop.is_set():
@@ -449,8 +463,10 @@ def _touch_session(dev, engine: Engine, stop: threading.Event, E) -> None:
                 slot = ev.value
             elif c == E.ABS_MT_POSITION_X:
                 pos.setdefault(slot, [0, 0])[0] = (ev.value - ax.min) * W / (ax.max - ax.min)
+                moves.add(slot)
             elif c == E.ABS_MT_POSITION_Y:
                 pos.setdefault(slot, [0, 0])[1] = (ev.value - ay.min) * H / (ay.max - ay.min)
+                moves.add(slot)
             elif c == E.ABS_MT_TRACKING_ID:
                 if ev.value == -1:
                     ups.add(slot)
@@ -463,8 +479,12 @@ def _touch_session(dev, engine: Engine, stop: threading.Event, E) -> None:
             for s in downs:
                 if s in pos:
                     engine.touch_down(s, pos[s][0], pos[s][1], ev.timestamp())
+            for s in moves - downs - ups:
+                if s in pos:
+                    engine.touch_move(s, pos[s][0], pos[s][1])
             ups.clear()
             downs.clear()
+            moves.clear()
 
 
 def hex_color(pg, v, fallback):
@@ -787,6 +807,8 @@ class Renderer:
                     self.engine.touch_down(99, e.pos[0] * self.scale, e.pos[1] * self.scale)
                 elif e.type == pg.MOUSEBUTTONUP:
                     self.engine.touch_up(99)
+                elif e.type == pg.MOUSEMOTION and e.buttons[0]:
+                    self.engine.touch_move(99, e.pos[0] * self.scale, e.pos[1] * self.scale)
             try:
                 self.frame()
             except Exception as ex:
@@ -971,6 +993,29 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
             return bad("widgets disabled", 503)
         b = await req.json()
         renderer.widgets.pet.say(str(b.get("text", ""))[:200], max(1.0, min(60.0, float(b.get("secs", 6)))))
+        return ok()
+
+    @r.post("/api/pet/act")
+    async def pet_act(req):
+        if renderer.widgets is None:
+            return bad("widgets disabled", 503)
+        a = str((await req.json()).get("action", ""))
+        pet = renderer.widgets.pet
+        return ok(action=a, x=round(pet.x), y=round(pet.y), mode=pet.mode) if pet.act(a) else bad("action must be one of jump run wave dance sit spin cheer")
+
+    @r.post("/api/touch/drag")
+    async def touch_drag(req):
+        """Test helper: press at the first point, move through the rest, release (slot 98)."""
+        b = await req.json()
+        pts, step = b.get("points") or [], max(5, min(100, int(b.get("step_ms", 16)))) / 1000
+        if len(pts) < 2:
+            return bad("need >= 2 points")
+        engine.touch_down(98, *pts[0])
+        for p in pts[1:]:
+            await asyncio.sleep(step)
+            engine.touch_move(98, *p)
+        await asyncio.sleep(step)
+        engine.touch_up(98)
         return ok()
 
     @r.post("/api/widgets/info")
