@@ -628,10 +628,13 @@ class Renderer:
         if text == self.bar_text:
             return None
         self.bar_text = text
-        self.bar_surf.fill((0, 0, 0, 150))
+        self.bar_surf.fill((0, 0, 0, 0))  # no band: text with a soft shadow straight on the wallpaper
         x = 30
         for m in self.prof["modules"]:
             t = self.small.render(items.get(m, m), True, self.accent)
+            sh = self.small.render(items.get(m, m), True, (0, 0, 0))
+            sh.set_alpha(150)
+            self.bar_surf.blit(sh, (x + 2, (BAR_H - t.get_height()) // 2 + 2))
             self.bar_surf.blit(t, (x, (BAR_H - t.get_height()) // 2))
             x += t.get_width() + 60
         return self.bar_rect
@@ -647,7 +650,7 @@ class Renderer:
         if b:
             c.blit(self.bar_surf, b.topleft, b)
         wg = self.widgets
-        if wg is not None and wg.cache is not None:
+        if wg is not None and wg.layer_on and wg.cache is not None:
             x = r.clip(wg.box)
             if x:
                 c.blit(wg.cache, x.topleft, x.move(-wg.box.x, -wg.box.y))
@@ -749,12 +752,12 @@ class Renderer:
             try:
                 eng = self.engine
                 wpm = len([t for t in eng.typed if t > time.time() - 60]) / 5
-                wr, box = self.widgets.draw(self.canvas, self.accent, eng.n_miss / max(1, eng.n_touch), wpm)
+                box = self.widgets.prepare(self.accent)
                 if box is not None:
                     self.restore(box)
                     if not full:
                         dirty.append(box)
-                cur += wr
+                cur += self.widgets.draw(self.canvas, self.accent, eng.n_miss / max(1, eng.n_touch), wpm)
             except Exception as ex:
                 print(f"[widgets] draw failed: {ex!r}", file=sys.stderr)
         self.prev = cur
@@ -961,6 +964,28 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
     @r.get("/api/chat/history")
     async def chat_history(_):
         return ok(items=chat.items if chat else [], focused=bool(chat and chat.focused))
+
+    @r.post("/api/pet/say")
+    async def pet_say(req):
+        if renderer.widgets is None:
+            return bad("widgets disabled", 503)
+        b = await req.json()
+        renderer.widgets.pet.say(str(b.get("text", ""))[:200], max(1.0, min(60.0, float(b.get("secs", 6)))))
+        return ok()
+
+    @r.post("/api/widgets/info")
+    async def widgets_info(req):
+        if renderer.widgets is None:
+            return bad("widgets disabled", 503)
+        renderer.widgets.set_info(str((await req.json()).get("text", "")))
+        return ok()
+
+    @r.post("/api/chat/open")
+    async def chat_open(req):
+        if renderer.widgets is None:
+            return bad("widgets disabled", 503)
+        renderer.widgets.set_open(bool((await req.json()).get("open", True)))
+        return ok(open=renderer.widgets.open)
 
     @r.post("/api/active/{app}")
     async def activate(req):

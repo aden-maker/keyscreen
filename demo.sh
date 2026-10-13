@@ -13,9 +13,15 @@ if [[ "${1:-}" == "stop" ]]; then
   pkill -f "board/mhs_device.py" ; pkill -f "desktop/panel.py" ; pkill -f "agnes.mjs serve"; echo stopped; exit 0
 fi
 curl -s -m 3 "$BOARD/api/state" >/dev/null || { echo "板子不可达：$BOARD（检查网线/地址）"; exit 1; }
-pgrep -f "board/mhs_device.py" >/dev/null || { nohup setsid python3 "$HERE/board/mhs_device.py" "$HUB" --board "$BOARD" >"$LOG/device.log" 2>&1 </dev/null & }
+# The board has no RTC battery/NTP on a direct cable: copy the PC clock so the bar and schedule are right.
+H="${BOARD#http://}"; H="${H%%:*}"
+ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=3 "cat@$H" \
+  "echo ${KS_PASS:-temppwd} | sudo -S -p '' date -s @$(date +%s) >/dev/null" 2>/dev/null || echo "（板子时钟同步失败，可忽略）"
+# AgnesHub lives inside the AGH daemon; any CLI call starts the daemon after a WSL restart.
+curl -s -m 2 http://127.0.0.1:4180/ >/dev/null || (cd "$ROOT/agnes-harness" && "$ROOT/scripts/agh.sh" package status >/dev/null 2>&1)
 pgrep -f "agnes.mjs serve" >/dev/null || { (cd "$HERE" && nohup setsid "$ROOT/scripts/agh.sh" serve --home "$ROOT/.agh" --profile local-dev --cwd "$HERE" --port 43117 >"$LOG/agh.log" 2>&1 </dev/null &) ; }
-pgrep -f "desktop/panel.py" >/dev/null || { nohup setsid python3 "$HERE/desktop/panel.py" --board "$BOARD" --no-watch >"$LOG/panel.log" 2>&1 </dev/null & }
+# panel.py also supervises the keyscreen-01 MHS bridge, the on-screen chat, foreground-app hints and the weather line.
+pgrep -f "desktop/panel.py" >/dev/null || { nohup setsid python3 "$HERE/desktop/panel.py" --board "$BOARD" --hub "$HUB" >"$LOG/panel.log" 2>&1 </dev/null & }
 sleep 4
 curl -s -m 3 http://127.0.0.1:4180/ >/dev/null && echo "AgnesHub      http://127.0.0.1:4180/   (设备 keyscreen-01)" || echo "AgnesHub 未监听 4180：先 scripts/agh.sh package status 看 @agnes/mhs 是否 enabled"
 echo "演示软件      http://127.0.0.1:43125/  <- 打开这个"

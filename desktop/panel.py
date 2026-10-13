@@ -33,20 +33,130 @@ def foreground_app() -> str | None:
         return None
 
 
-def watch(board: str, stop: threading.Event) -> None:
-    last = None
+PRETTY = {"code": "VS Code", "cursor": "Cursor", "chrome": "Chrome", "msedge": "Edge", "firefox": "Firefox", "notepad": "记事本",
+          "winword": "Word", "excel": "Excel", "powerpnt": "PowerPoint", "photoshop": "Photoshop", "wechat": "微信", "weixin": "微信",
+          "qq": "QQ", "explorer": "资源管理器", "windowsterminal": "终端", "pycharm64": "PyCharm", "steam": "Steam", "bilibili": "哔哩哔哩"}
+FG_PS = r"""Add-Type @"
+using System;using System.Runtime.InteropServices;
+public class FG{[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();[DllImport("user32.dll")]public static extern int GetWindowThreadProcessId(IntPtr h,out int p);}
+"@
+$last=""
+while($true){$p=0;[void][FG]::GetWindowThreadProcessId([FG]::GetForegroundWindow(),[ref]$p);try{$n=(Get-Process -Id $p).ProcessName}catch{$n=""}
+if($n -ne $last){[Console]::Out.WriteLine($n);[Console]::Out.Flush();$last=$n};Start-Sleep -Milliseconds 700}"""
+
+
+def board_post(board: str, path: str, body: dict) -> None:
+    req = urllib.request.Request(board + path, data=json.dumps(body, ensure_ascii=False).encode(), headers={"Content-Type": "application/json"}, method="POST")
+    urllib.request.urlopen(req, timeout=5).read()
+
+
+def foreground_stream(stop: threading.Event):
+    """Yields foreground app names. Under WSL the PC's apps are Windows processes, so ask PowerShell."""
+    if "microsoft" in Path("/proc/version").read_text().lower() if Path("/proc/version").exists() else False:
+        import base64
+        ps = next((p for p in ("powershell.exe", "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe") if subprocess.run(["which", p], capture_output=True).returncode == 0 or Path(p).exists()), None)
+        if ps:
+            enc = base64.b64encode(FG_PS.encode("utf-16-le")).decode()
+            proc = subprocess.Popen([ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            for line in proc.stdout:
+                if stop.is_set():
+                    proc.kill()
+                    return
+                yield line.strip().lower()
+            return
     while not stop.wait(1.0):
-        app = foreground_app()
-        if not app or app == last:
-            continue
+        yield foreground_app()
+
+
+def watch(board: str, stop: threading.Event) -> None:
+    last, said = None, 0.0
+    while not stop.is_set():
         try:
-            profiles = json.load(urllib.request.urlopen(board + "/api/state", timeout=3))["profiles"]
-            target = app if app in profiles else "default"
-            urllib.request.urlopen(urllib.request.Request(f"{board}/api/active/{target}", method="POST"), timeout=3)
-            print(f"[watch] {app} -> profile {target}")
-            last = app
+            for app in foreground_stream(stop):
+                if not app or app == last or app in ("powershell", "conhost", "searchhost", "shellexperiencehost", "lockapp"):
+                    continue
+                last = app
+                try:
+                    profiles = json.load(urllib.request.urlopen(board + "/api/state", timeout=3))["profiles"]
+                    target = app if app in profiles else "default"
+                    urllib.request.urlopen(urllib.request.Request(f"{board}/api/active/{target}", method="POST"), timeout=3)
+                    name = PRETTY.get(app, app)
+                    if time.time() - said > 4:
+                        board_post(board, "/api/pet/say", {"text": f"你切到了 {name}～" + (f"已换成 {target} 键位" if target != "default" else ""), "secs": 4})
+                        said = time.time()
+                    print(f"[watch] {app} -> profile {target}")
+                except Exception as e:
+                    print(f"[watch] board unreachable: {e}")
         except Exception as e:
-            print(f"[watch] board unreachable: {e}")
+            print(f"[watch] foreground detection failed: {e}")
+        stop.wait(5)
+
+
+def supervise_device(board: str, hub: str, stop: threading.Event) -> None:
+    """Keeps the MHS device bridge (keyscreen-01 on AgnesHub) alive; WSL restarts used to leave the hub empty."""
+    here = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "agnes-harness/packages/mhs/python/src")}
+    subprocess.run(["pkill", "-f", "board/mhs_device.py"], capture_output=True)
+    Path("/tmp/keyscreen-demo").mkdir(exist_ok=True)
+    while not stop.is_set():
+        with open("/tmp/keyscreen-demo/device.log", "a") as log:
+            p = subprocess.Popen([sys.executable, str(here / "board/mhs_device.py"), hub, "--board", board], stdout=log, stderr=log, env=env, cwd=str(here))
+            print(f"[device] keyscreen-01 bridge pid {p.pid} -> {hub}")
+            while p.poll() is None and not stop.wait(2):
+                pass
+        if not stop.is_set():
+            print(f"[device] bridge exited ({p.returncode}); restarting in 3 s")
+            stop.wait(3)
+
+
+def weather(city: str) -> str:
+    try:
+        u = f"https://wttr.in/{urllib.parse.quote(city)}?format=%C+%t&lang=zh-cn&m"
+        return urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "curl/8"}), timeout=8).read().decode().strip()
+    except Exception:
+        return ""
+
+
+def next_event() -> str:
+    """desktop/schedule.txt: one event per line, `HH:MM text` (daily) or `YYYY-MM-DD HH:MM text`."""
+    f = Path(__file__).resolve().parent / "schedule.txt"
+    if not f.exists():
+        return ""
+    now, today, best = time.strftime("%H:%M"), time.strftime("%Y-%m-%d"), None
+    for line in f.read_text(encoding="utf-8").splitlines():
+        parts = line.strip().split(maxsplit=2)
+        if not parts or line.lstrip().startswith("#"):
+            continue
+        if re.match(r"\d{4}-\d{2}-\d{2}$", parts[0]):
+            if parts[0] != today or len(parts) < 3:
+                continue
+            parts = parts[1:]
+        else:
+            parts = line.strip().split(maxsplit=1)
+        if len(parts) == 2 and re.match(r"\d{1,2}:\d{2}$", parts[0]) and parts[0].zfill(5) >= now:
+            best = min(best or (parts[0].zfill(5), parts[1]), (parts[0].zfill(5), parts[1]))
+    return f"{best[0]} {best[1]}" if best else ""
+
+
+def info_loop(board: str, city: str, stop: threading.Event) -> None:
+    """Info line every minute; once an hour Agnes turns weather + next event into one cute sentence for the pet."""
+    w, w_at, told = "", 0.0, 0.0
+    while not stop.is_set():
+        if time.time() - w_at > 1800 or not w:
+            w, w_at = weather(city) or w, time.time()
+        ev = next_event()
+        line = " · ".join(x for x in (f"{city} {w}" if w else "", f"下一项 {ev}" if ev else "") if x)
+        try:
+            board_post(board, "/api/widgets/info", {"text": line})
+            if line and time.time() - told > 3600:
+                told = time.time()
+                r = ask_agnes(f"现在 {time.strftime('%H:%M')}。天气：{w or '未知'}；下一项日程：{ev or '无'}。"
+                              "用一句不超过 30 字、可爱的二次元口吻提醒我。只输出这句话，不要调用工具。", timeout=120)
+                if r.get("ok") and r.get("text"):
+                    board_post(board, "/api/pet/say", {"text": r["text"].splitlines()[-1][:80], "secs": 15})
+        except Exception as e:
+            print(f"[info] {e}")
+        stop.wait(60)
 
 
 ROOT = Path(__file__).resolve().parents[3]  # repo root: scripts/agh.sh, work/keyscreen
@@ -125,7 +235,13 @@ def main() -> None:
     ap.add_argument("--board", default="http://127.0.0.1:8765")
     ap.add_argument("--port", type=int, default=43125)
     ap.add_argument("--no-watch", action="store_true")
+    ap.add_argument("--hub", default=os.environ.get("HUB", "ws://127.0.0.1:4180"), help="AgnesHub for the keyscreen-01 bridge; '' to not run it")
+    ap.add_argument("--city", default=os.environ.get("KS_CITY", "南京"))
     a = ap.parse_args()
+    ev = threading.Event()
+    if a.hub:
+        threading.Thread(target=supervise_device, args=(a.board, a.hub, ev), daemon=True).start()
+    threading.Thread(target=info_loop, args=(a.board, a.city, ev), daemon=True).start()
     web = Path(__file__).resolve().parent / "web"
     (web / "config.js").write_text(f"window.BOARD = {json.dumps(a.board)};\n")
     if not a.no_watch:

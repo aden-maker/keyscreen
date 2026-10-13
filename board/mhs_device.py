@@ -113,6 +113,13 @@ def make_device() -> tuple[Device, Any]:
              "offsets": s["profile"].get("offsets", {}), "screenshot_bytes": len(png), "screenshot_url": BOARD + "/api/screenshot"}
         return reply(f"screen {s['size']}, keyboard area {s.get('keyboard')}, active={s['active']} wallpaper={d['wallpaper']} theme={d['theme']} offsets={d['offsets']}; screenshot {len(png)} bytes at {d['screenshot_url']}", d)
 
+    @dev.tool("Make the Agnes desk pet on the keyboard's top half say a short line in a speech bubble.",
+              params={"text": {"type": "string", "maxLength": 200}, "seconds": {"type": "number", "minimum": 1, "maximum": 60}},
+              required=["text"], timeout=10)
+    async def pet_say(call_: Any, text: str, seconds: float = 8) -> dict:
+        await call("POST", "/api/pet/say", {"text": text, "secs": seconds})
+        return reply(f"desk pet says: {text}")
+
     async def poll() -> None:
         while True:
             try:
