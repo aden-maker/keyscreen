@@ -132,4 +132,28 @@ function live() {
   ws.onclose = () => setTimeout(live, 2000);
 }
 setInterval(() => { if (!document.hidden) $("shot").src = `${B}/api/screenshot?fmt=jpg&t=${Date.now()}`; }, 1000);
+// ---- Agnes: one turn through the panel's /api/agnes (AGH print mode) ----
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+let busy = false;
+async function ask(prompt) {
+  if (busy || !prompt) return;
+  busy = true; $("agnesGo").disabled = true;
+  const log = $("agnesLog"); log.className = "";
+  log.innerHTML = `<div class="step"><span class="think"></span>Agnes 正在读取设备并思考…（通常 20–60 秒）</div>`;
+  $("agnesMeta").textContent = "";
+  const t0 = Date.now(), tick = setInterval(() => { $("agnesMeta").textContent = `${((Date.now() - t0) / 1000) | 0} s`; }, 1000);
+  try {
+    const r = await (await fetch("/api/agnes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt }) })).json();
+    const steps = (r.steps || []).filter((s) => s.includes("·")).map((s) => `<div class="step">⚙ ${esc(s)}</div>`).join("");
+    log.innerHTML = steps + `<div class="ans">${r.ok ? esc(r.text || "(无文本回复)") : '<span class="err">' + esc(r.error || "失败") + "</span>\n" + esc(r.text || "")}</div>`;
+    $("agnesMeta").textContent = `用时 ${r.seconds ?? ((Date.now() - t0) / 1000).toFixed(1)} s · ${(r.steps || []).filter((s) => s.includes("·")).length} 次工具调用`;
+    await refresh();
+  } catch (e) {
+    log.innerHTML = `<span class="err">面板不可达：${esc(e.message)}。请确认 desktop/panel.py 正在运行。</span>`;
+  } finally { clearInterval(tick); busy = false; $("agnesGo").disabled = false; }
+}
+document.querySelectorAll("[data-ask]").forEach((b) => (b.onclick = () => { $("agnesIn").value = b.dataset.ask; ask(b.dataset.ask); }));
+$("agnesGo").onclick = () => ask($("agnesIn").value.trim());
+$("agnesIn").onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ask($("agnesIn").value.trim()); };
+
 refresh(); live();

@@ -381,10 +381,38 @@ def evdev_loop(engine: Engine, stop: threading.Event) -> None:
         print("[touch] python-evdev missing; touch disabled", file=sys.stderr)
         return
     E = evdev.ecodes
-    dev = next((evdev.InputDevice(p) for p in evdev.list_devices() if E.ABS_MT_POSITION_X in dict(evdev.InputDevice(p).capabilities().get(E.EV_ABS, []))), None)
-    if dev is None:
-        print("[touch] no multitouch device found", file=sys.stderr)
-        return
+    # The panel's USB can drop (cable, power dip) and re-enumerate; keep waiting and re-open it instead of dying.
+    warned = False
+    while not stop.is_set():
+        try:
+            dev = next((evdev.InputDevice(p) for p in evdev.list_devices() if E.ABS_MT_POSITION_X in dict(evdev.InputDevice(p).capabilities().get(E.EV_ABS, []))), None)
+        except OSError:
+            dev = None
+        if dev is None:
+            if not warned:
+                print("[touch] no multitouch device; waiting for hot-plug", file=sys.stderr)
+                warned = True
+            stop.wait(1.0)
+            continue
+        warned = False
+        try:
+            _touch_session(dev, engine, stop, E)
+        except OSError as e:
+            print(f"[touch] device lost ({e}); releasing keys, waiting for re-plug", file=sys.stderr)
+        finally:
+            for s in list(getattr(engine, "active", {}) or {}):
+                try:
+                    engine.touch_up(s)
+                except Exception:
+                    pass
+            try:
+                dev.close()
+            except Exception:
+                pass
+        stop.wait(0.5)
+
+
+def _touch_session(dev, engine: Engine, stop: threading.Event, E) -> None:
     absinfo = dict(dev.capabilities(absinfo=True)[E.EV_ABS])  # InputDevice.absinfo() needs evdev >= 1.2
     ax, ay = absinfo[E.ABS_MT_POSITION_X], absinfo[E.ABS_MT_POSITION_Y]
     try:

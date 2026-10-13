@@ -4,21 +4,36 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>KeyScreen 客户端</title>
 <style>
-:root{--bg:#0b1020;--card:#141b2e;--line:#26304a;--fg:#e6ebf5;--mut:#8a94ad;--acc:#38bdf8}
-*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif;background:var(--bg);color:var(--fg)}
-header{display:flex;gap:12px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
-header b{font-size:17px}#status{color:var(--mut);margin-left:auto}
-main{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px;max-width:1400px;margin:auto}
-section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
-section.wide{grid-column:1/-1}h2{margin:0 0 10px;font-size:15px}h3{margin:14px 0 8px;font-size:13px;color:var(--mut);font-weight:500}
-button,select,input{background:#0f1526;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit}
-button{cursor:pointer}button.pri{background:var(--acc);color:#04121c;border:0;font-weight:600}
+:root{--bg:#1a1530;--card:rgba(38,30,66,.72);--line:rgba(255,182,222,.22);--fg:#f6eefb;--mut:#b8a9d6;--acc:#ff8fc8;--acc2:#8fd8ff;--inp:rgba(20,14,40,.75)}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif;color:var(--fg);min-height:100vh;
+ background:radial-gradient(1200px 600px at 10% -10%,#ff9ad166 0,transparent 60%),radial-gradient(900px 500px at 100% 0,#7fd3ff55 0,transparent 55%),radial-gradient(800px 600px at 50% 110%,#b388ff44 0,transparent 60%),var(--bg)}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.35;
+ background-image:radial-gradient(circle,#fff 0 1px,transparent 1.6px),radial-gradient(circle,#ffd6ec 0 1px,transparent 1.8px);background-size:140px 140px,220px 220px;background-position:0 0,70px 90px}
+header{display:flex;gap:12px;align-items:center;padding:12px 20px;position:sticky;top:0;z-index:2;backdrop-filter:blur(14px);background:rgba(26,21,48,.72);border-bottom:1px solid var(--line)}
+header b{font-size:19px;background:linear-gradient(90deg,#ffb3dc,#8fd8ff);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:.5px}
+header .sub{color:var(--mut);font-size:12px}#status{color:var(--mut);margin-left:auto}
+.mascot{width:34px;height:34px;border-radius:50%;background:conic-gradient(from 200deg,#ffb3dc,#8fd8ff,#c7a6ff,#ffb3dc);box-shadow:0 0 0 3px #ffffff22,0 4px 16px #ff8fc855;display:grid;place-items:center;font-size:18px}
+main{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px;max-width:1400px;margin:auto;position:relative;z-index:1}
+section{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;backdrop-filter:blur(10px);box-shadow:0 10px 30px #0006,inset 0 1px 0 #ffffff14}
+section.wide{grid-column:1/-1}h2{margin:0 0 10px;font-size:15px;display:flex;align-items:center;gap:8px}
+h2:before{content:"";width:6px;height:16px;border-radius:3px;background:linear-gradient(#ffb3dc,#8fd8ff)}
+h3{margin:14px 0 8px;font-size:13px;color:var(--mut);font-weight:500}
+button,select,input,textarea{background:var(--inp);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:6px 11px;font:inherit}
+button{cursor:pointer;transition:transform .08s,box-shadow .2s}button:hover{box-shadow:0 0 0 2px #ff8fc833}button:active{transform:scale(.97)}
+button.pri{background:linear-gradient(135deg,#ff8fc8,#c7a6ff);color:#2a1038;border:0;font-weight:700;box-shadow:0 6px 18px #ff8fc855}
+button.sky{background:linear-gradient(135deg,#8fd8ff,#c7a6ff);color:#102030;border:0;font-weight:700}
+textarea{width:100%;min-height:64px;resize:vertical}
+#agnesLog{background:var(--inp);border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-height:90px;max-height:320px;overflow:auto;white-space:pre-wrap;font-size:13px}
+#agnesLog .step{color:var(--acc2);font-size:12px}#agnesLog .ans{margin-top:6px;border-left:3px solid var(--acc);padding-left:10px}
+.think{display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid var(--acc);border-top-color:transparent;animation:spin .8s linear infinite;vertical-align:-1px;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
 input[type=color]{padding:2px;width:42px;height:32px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
 .grid.small{grid-template-columns:repeat(auto-fill,minmax(72px,1fr))}
 figure{position:relative;margin:0;border:2px solid transparent;border-radius:8px;overflow:hidden;cursor:pointer;background:#000}
-figure.on{border-color:var(--acc)}figure img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}
+figure.on{border-color:var(--acc);box-shadow:0 0 14px #ff8fc866}figure img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}
 .grid.small figure img{aspect-ratio:1;object-fit:contain;background:#0f1526}
 figcaption{font-size:12px;padding:2px 6px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 figure video{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}
@@ -28,8 +43,8 @@ figure .del{position:absolute;top:4px;right:4px;padding:0 7px;border-radius:6px;
 figure:hover .del{display:block}
 .seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
 .seg button{border:0;border-radius:0;border-right:1px solid var(--line)}.seg button:last-child{border-right:0}
-.seg button.on{background:var(--acc);color:#04121c;font-weight:600}
-.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{background:#0f1526;border:1px solid var(--line);border-radius:999px;padding:2px 4px 2px 10px}
+.seg button.on{background:linear-gradient(135deg,#ff8fc8,#c7a6ff);color:#2a1038;font-weight:700}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{background:var(--inp);border:1px solid var(--line);border-radius:999px;padding:2px 4px 2px 10px}
 .chip button{border:0;background:none;padding:0 6px;color:var(--mut)}
 canvas,#shot{width:100%;border-radius:8px;background:#000;display:block}
 table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left}
@@ -38,8 +53,20 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:4px 6px;b
 </style>
 </head>
 <body>
-<header><b>KeyScreen 客户端</b><span id="status">连接中…</span></header>
+<header><span class="mascot">🌸</span><div><b>KeyScreen</b><div class="sub">Agnes 驱动的触控动态键盘 · LubanCat 1H</div></div><span id="status">连接中…</span></header>
 <main>
+  <section class="wide">
+    <h2>Agnes 助手 <span class="mut" style="font-weight:400;font-size:12px">· agnes-3.0-flash 通过 AGH + MHS 直接操作键盘</span></h2>
+    <div class="row">
+      <button class="sky" data-ask="我要开始写代码了。用 keyscreen-01 的 list_wallpapers 看键盘上有哪些壁纸，选一张最适合长时间写代码的，用 set_wallpaper 应用到 default profile，并配一个与壁纸协调的主题色和合适的按键不透明度。一两句话说明理由。">🎨 写代码配色</button>
+      <button class="sky" data-ask="用 keyscreen-01 的 list_wallpapers 看键盘上有哪些壁纸，选一张最有二次元/活泼感觉的，用 set_wallpaper 应用到 default profile，主题色选粉色或天蓝色系。一两句话说明理由。">✨ 二次元模式</button>
+      <button class="sky" data-ask="调用 keyscreen-01 的 get_touch_stats（since_minutes=0）。在 count≥10 的键中（Fn 除外）选出偏移最明显的 2 个（按 |avg_dx|+|avg_dy| 排序），对每个键调用 adjust_key，dx=avg_dx/2、dy=avg_dy/2（各自限制在 ±15 内，取整）。一两句话汇报调整了哪些键、各移动了多少像素、为什么。">🎯 按我的习惯校准按键</button>
+      <button class="sky" data-ask="用 keyscreen-01 的 get_touch_stats（since_minutes=0）总结我的打字情况：总次数、误触率、哪些键最容易按偏、按压时长有什么特点，给出一条改进建议。不要修改任何设置。">📊 分析我的打字</button>
+    </div>
+    <div class="row"><textarea id="agnesIn" placeholder="或者直接对 Agnes 说：例如「把 Shift 键往左挪一点」「换个暗一点的壁纸」"></textarea></div>
+    <div class="row"><button class="pri" id="agnesGo">发送给 Agnes</button><span id="agnesMeta" class="mut"></span></div>
+    <div id="agnesLog" class="mut">Agnes 的工具调用和回复会显示在这里。每次执行后下方的键盘画面会自动刷新。</div>
+  </section>
   <section class="wide"><h2>键盘实时画面</h2><img id="shot" alt="键盘画面"></section>
   <section>
     <h2>壁纸</h2>

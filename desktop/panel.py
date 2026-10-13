@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 import threading
@@ -47,6 +49,56 @@ def watch(board: str, stop: threading.Event) -> None:
             print(f"[watch] board unreachable: {e}")
 
 
+ROOT = Path(__file__).resolve().parents[3]  # repo root: scripts/agh.sh, work/keyscreen
+AGH = ROOT / "scripts" / "agh.sh"
+
+
+def ask_agnes(prompt: str, timeout: int = 240) -> dict:
+    """Run one Agnes turn through AGH (print mode). The model acts on the keyboard via the MHS device."""
+    env = {**os.environ, "HOME": os.environ.get("HOME") or str(Path.home()), "AGNES_HUB_ORIGIN": os.environ.get("AGNES_HUB_ORIGIN", "http://127.0.0.1:4180")}
+    for k in ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        env.pop(k, None)
+    t0 = time.time()
+    try:
+        out = subprocess.run(["bash", str(AGH), "-p", prompt, "--cwd", str(ROOT / "work" / "keyscreen"), "--mode", "text"],
+                             capture_output=True, text=True, timeout=timeout, env=env, cwd=str(ROOT / "work" / "keyscreen"))
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "Agnes 超时", "steps": [], "text": ""}
+    steps, text = [], []
+    for line in (out.stdout + out.stderr).splitlines():
+        if re.match(r"^\s+at ", line) or "sk-" in line:
+            continue
+        if line.startswith("- tool "):
+            steps.append(line[7:])
+        else:
+            text.append(line)
+    return {"ok": out.returncode == 0, "text": "\n".join(text).strip(), "steps": steps, "seconds": round(time.time() - t0, 1),
+            **({} if out.returncode == 0 else {"error": f"agh 退出码 {out.returncode}"})}
+
+
+class Handler(SimpleHTTPRequestHandler):
+    def do_POST(self) -> None:
+        if self.path != "/api/agnes":
+            self.send_error(404)
+            return
+        n = int(self.headers.get("Content-Length") or 0)
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+            res = ask_agnes(str(body.get("prompt", ""))[:2000]) if body.get("prompt") else {"ok": False, "error": "empty prompt"}
+        except Exception as e:  # never let the panel die on a bad request
+            res = {"ok": False, "error": str(e)}
+        data = json.dumps(res, ensure_ascii=False).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, fmt, *args) -> None:
+        if "/api/agnes" in str(args[0] if args else ""):
+            super().log_message(fmt, *args)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--board", default="http://127.0.0.1:8765")
@@ -57,7 +109,7 @@ def main() -> None:
     (web / "config.js").write_text(f"window.BOARD = {json.dumps(a.board)};\n")
     if not a.no_watch:
         threading.Thread(target=watch, args=(a.board, threading.Event()), daemon=True).start()
-    handler = lambda *x, **k: SimpleHTTPRequestHandler(*x, directory=str(web), **k)
+    handler = lambda *x, **k: Handler(*x, directory=str(web), **k)
     print(f"[panel] http://127.0.0.1:{a.port}  board={a.board}")
     ThreadingHTTPServer(("0.0.0.0", a.port), handler).serve_forever()
 
