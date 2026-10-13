@@ -336,6 +336,8 @@ class Engine:
         self.typed: list[float] = []
         self.latency_ms: collections.deque = collections.deque(maxlen=200)
         self.on_press = lambda label, x, y: None
+        self.widgets = None  # set by Renderer; owns the top area (pet + Agnes chat box)
+        self.n_touch = self.n_miss = 0
 
     def touch_down(self, slot: int, x: float, y: float, ts: float | None = None) -> None:
         if slot in self.active:
@@ -344,8 +346,21 @@ class Engine:
         if y < BAR_H:
             self.active[slot] = {"bar": True, "x": x}
             return
+        if y < KB_Y and self.widgets is not None:
+            self.active[slot] = {"bar": True, "x": x, "widget": True}
+            try:
+                self.widgets.tap(x, y)
+            except Exception as e:
+                print(f"[widgets] tap failed: {e!r}", file=sys.stderr)
+            return
         key, hit, dx, dy = hit_test(self.store.keys, x, y)
         rec = {"t": t0, "x": round(x, 1), "y": round(y, 1), "key": key["label"] if key else None, "dx": round(dx, 1), "dy": round(dy, 1), "hit": hit, "code": key["code"] if key and hit else 0}
+        if key and hit and self.widgets is not None:
+            try:
+                if self.widgets.key(key["label"], x):  # chat box focused: the key goes to Agnes, not to the PC
+                    rec["code"] = 0
+            except Exception as e:
+                print(f"[widgets] key failed: {e!r}", file=sys.stderr)
         self.active[slot] = rec
         if rec["code"]:
             self.hid.press(rec["code"])
@@ -360,8 +375,11 @@ class Engine:
         if rec is None:
             return None
         if rec.get("bar"):
-            self.store.emit({"type": "bar", "x": rec["x"]})
+            if not rec.get("widget"):
+                self.store.emit({"type": "bar", "x": rec["x"]})
             return None
+        self.n_touch += 1
+        self.n_miss += 0 if rec["hit"] else 1
         if rec["code"]:
             self.hid.release(rec.pop("code"))
         rec.pop("code", None)
@@ -480,8 +498,15 @@ class Renderer:
         self.anim: dict | None = None
         self.store, self.engine = store, engine
         font_names = "notosanscjksc,notosanscjk,wqyzenhei,wqymicrohei,droidsansfallbackfull,droidsansfallback"
-        self.font = pg.font.SysFont(font_names, int(UNIT_Y * 0.34)) if pg.font.match_font(font_names) else pg.font.Font(None, int(UNIT_Y * 0.46))
-        self.small = pg.font.SysFont(font_names, 28) if pg.font.match_font(font_names) else pg.font.Font(None, 34)
+        # pygame's sysfont index misses .ttc files on the vendor image, so look for CJK font files directly.
+        cjk = [*sorted(str(p) for p in (HERE / "fonts").glob("*.tt[fc]")),
+               "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+               "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+               os.environ.get("KEYSCREEN_FONT", "")]
+        fp = next((p for p in cjk if p and Path(p).is_file()), None) or pg.font.match_font(font_names)
+        print(f"[font] {fp or 'pygame default (no CJK)'}", file=sys.stderr)
+        self.font = pg.font.Font(fp, int(UNIT_Y * 0.34)) if fp else pg.font.Font(None, int(UNIT_Y * 0.46))
+        self.small = pg.font.Font(fp, 28) if fp else pg.font.Font(None, 34)
         self.wall_cache: tuple = ("", None)
         self.fx_cache: dict = {}
         self.gradient = pg.Surface((W, H)).convert()
@@ -497,6 +522,15 @@ class Renderer:
         self.shot_req, self.shot_done = threading.Event(), threading.Event()
         self.shot_raw = b""
         engine.on_press = self.effect
+        self.widgets = None
+        if os.environ.get("KEYSCREEN_WIDGETS", "1") != "0":
+            try:
+                from widgets import Widgets
+                mk = (lambda n: pg.font.Font(fp, n)) if fp else (lambda n: pg.font.Font(None, n + 6))
+                self.widgets = Widgets(pg, store, engine, BAR_H, int(KB_Y), W, mk)
+                engine.widgets = self.widgets
+            except Exception as e:
+                print(f"[widgets] disabled: {e!r}", file=sys.stderr)
 
     def effect(self, label: str, x: float | None = None, y: float | None = None) -> None:
         self.fx_queue.append((time.perf_counter(), label, x, y))
@@ -612,6 +646,11 @@ class Renderer:
         b = r.clip(self.bar_rect)
         if b:
             c.blit(self.bar_surf, b.topleft, b)
+        wg = self.widgets
+        if wg is not None and wg.cache is not None:
+            x = r.clip(wg.box)
+            if x:
+                c.blit(wg.cache, x.topleft, x.move(-wg.box.x, -wg.box.y))
 
     def draw_fx(self, e, now: float):
         pg = self.pg
@@ -706,6 +745,18 @@ class Renderer:
                 alive.append(e)
                 cur.append(r)
         self.live = alive
+        if self.widgets is not None:
+            try:
+                eng = self.engine
+                wpm = len([t for t in eng.typed if t > time.time() - 60]) / 5
+                wr, box = self.widgets.draw(self.canvas, self.accent, eng.n_miss / max(1, eng.n_touch), wpm)
+                if box is not None:
+                    self.restore(box)
+                    if not full:
+                        dirty.append(box)
+                cur += wr
+            except Exception as ex:
+                print(f"[widgets] draw failed: {ex!r}", file=sys.stderr)
         self.prev = cur
         if self.scale != 1:
             if full or dirty or cur:
@@ -887,6 +938,29 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
         if body.get("activate"):
             store.activate(req.match_info["app"])
         return ok(profile=p)
+
+    # -- on-screen Agnes chat: the board queues prompts, desktop/panel.py runs them through AGH and posts replies --
+    chat = renderer.widgets.chat if renderer.widgets is not None else None
+
+    @r.post("/api/chat/send")
+    async def chat_send(req):
+        if chat is None:
+            return bad("widgets disabled", 503)
+        it = chat.send(str((await req.json()).get("prompt", "")))
+        return ok(item=it) if it else bad("empty prompt")
+
+    @r.get("/api/chat/pending")
+    async def chat_pending(_):
+        return ok(item=chat.pending() if chat else None)
+
+    @r.post("/api/chat/reply")
+    async def chat_reply(req):
+        b = await req.json()
+        return ok() if chat and chat.reply(int(b.get("id", 0)), str(b.get("text", "")), bool(b.get("ok", True))) else bad("unknown id")
+
+    @r.get("/api/chat/history")
+    async def chat_history(_):
+        return ok(items=chat.items if chat else [], focused=bool(chat and chat.focused))
 
     @r.post("/api/active/{app}")
     async def activate(req):

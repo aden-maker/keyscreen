@@ -76,6 +76,27 @@ def ask_agnes(prompt: str, timeout: int = 240) -> dict:
             **({} if out.returncode == 0 else {"error": f"agh 退出码 {out.returncode}"})}
 
 
+def chat_bridge(board: str, stop: threading.Event) -> None:
+    """Carries the board's on-screen chat to Agnes: poll the queue, run AGH, post the reply back."""
+    def post(path: str, body: dict) -> None:
+        req = urllib.request.Request(board + path, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req, timeout=5).read()
+    while not stop.wait(1.0):
+        try:
+            it = json.load(urllib.request.urlopen(board + "/api/chat/pending", timeout=3)).get("item")
+        except Exception:
+            continue
+        if not it:
+            continue
+        print(f"[chat] #{it['id']} {it['prompt'][:60]}")
+        res = ask_agnes(it["prompt"])
+        text = res.get("text") or res.get("error") or "(无回复)"
+        try:
+            post("/api/chat/reply", {"id": it["id"], "text": text, "ok": bool(res.get("ok"))})
+        except Exception as e:
+            print(f"[chat] reply failed: {e}")
+
+
 class Handler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path != "/api/agnes":
@@ -109,6 +130,7 @@ def main() -> None:
     (web / "config.js").write_text(f"window.BOARD = {json.dumps(a.board)};\n")
     if not a.no_watch:
         threading.Thread(target=watch, args=(a.board, threading.Event()), daemon=True).start()
+    threading.Thread(target=chat_bridge, args=(a.board, threading.Event()), daemon=True).start()
     handler = lambda *x, **k: Handler(*x, directory=str(web), **k)
     print(f"[panel] http://127.0.0.1:{a.port}  board={a.board}")
     ThreadingHTTPServer(("0.0.0.0", a.port), handler).serve_forever()
