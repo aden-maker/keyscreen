@@ -21,6 +21,9 @@ figure{position:relative;margin:0;border:2px solid transparent;border-radius:8px
 figure.on{border-color:var(--acc)}figure img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}
 .grid.small figure img{aspect-ratio:1;object-fit:contain;background:#0f1526}
 figcaption{font-size:12px;padding:2px 6px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+figure video{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}
+figure .tag{position:absolute;top:4px;left:4px;font-size:11px;padding:1px 6px;border-radius:5px;background:#000a;color:#fff}
+figure .tag.busy{color:#fbbf24}figure .tag.bad{color:#f87171}
 figure .del{position:absolute;top:4px;right:4px;padding:0 7px;border-radius:6px;background:#000a;border:0;color:#fff;display:none}
 figure:hover .del{display:block}
 .seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
@@ -40,9 +43,9 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:4px 6px;b
   <section class="wide"><h2>键盘实时画面</h2><img id="shot" alt="键盘画面"></section>
   <section>
     <h2>壁纸</h2>
-    <div class="row"><input type="file" id="file" accept=".png,.jpg,.jpeg,.bmp" multiple><button class="pri" id="up">上传到键盘</button></div>
+    <div class="row"><input type="file" id="file" accept=".png,.jpg,.jpeg,.bmp,.webp,.gif,.mp4,.webm,.mov,.mkv" multiple><button class="pri" id="up">上传到键盘</button></div>
     <div class="grid" id="walls"></div>
-    <p class="mut">点图片设为壁纸，悬停可删除。非 16:9 图片会居中裁切铺满。</p>
+    <p class="mut">静态：PNG/JPG/BMP/WebP。动态：GIF、动图 WebP、MP4/WebM 视频（上传后板子解码约几十秒，取前 6 秒循环播放）。点击设为壁纸，悬停可删除；非 16:9 会居中裁切铺满。</p>
   </section>
   <section>
     <h2>按键特效</h2>

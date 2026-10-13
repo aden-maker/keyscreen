@@ -28,9 +28,22 @@ async function refresh() {
   stats();
 }
 
+function thumb(kind, w) {
+  const src = `${B}/api/${kind}/${enc(w)}`;
+  if ((S.video_ext || []).some((e) => w.toLowerCase().endsWith(e))) return `<video src="${src}" muted loop autoplay playsinline preload="metadata"></video>`;
+  return `<img loading="lazy" src="${src}">`;
+}
+function tag(kind, w) {
+  const st = kind === "wallpapers" && S.anim ? S.anim[w] : null;
+  if (!st) return "";
+  if (st === "ready") return `<span class="tag">动态</span>`;
+  if (st === "converting") return `<span class="tag busy">转换中…</span>`;
+  return `<span class="tag bad" title="${st}">转换失败</span>`;
+}
+
 function gallery(el, items, current, kind, emptyText, pick) {
   el.innerHTML = items.length ? items.map((w) =>
-    `<figure class="${w === current ? "on" : ""}" data-w="${w}"><img loading="lazy" src="${B}/api/${kind}/${enc(w)}"><figcaption>${w}</figcaption><button class="del" title="删除">×</button></figure>`).join("")
+    `<figure class="${w === current ? "on" : ""}" data-w="${w}">${thumb(kind, w)}${tag(kind, w)}<figcaption>${w}</figcaption><button class="del" title="删除">×</button></figure>`).join("")
     : `<div class="empty">${emptyText}</div>`;
   el.querySelectorAll("figure").forEach((f) => {
     f.onclick = () => pick(f.dataset.w);
@@ -84,7 +97,13 @@ async function upload(input, path) {
   const fd = new FormData();
   [...files].forEach((f) => fd.append("file", f, f.name));
   status("上传中…");
-  try { const r = await (await fetch(B + path, { method: "POST", body: fd })).json(); if (!r.ok) throw new Error(r.error); input.value = ""; return r.saved; }
+  try {
+    const r = await (await fetch(B + path, { method: "POST", body: fd })).json();
+    if (!r.ok) throw new Error(r.error);
+    input.value = "";
+    if (r.anim && Object.keys(r.anim).length) status("已上传，板子正在解码动态壁纸，完成后自动显示…");
+    return r.saved;
+  }
   catch (e) { status(`上传失败：${e.message}`, true); }
 }
 

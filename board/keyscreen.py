@@ -24,7 +24,9 @@ import math
 import os
 import queue
 import random
+import shutil
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -37,7 +39,13 @@ FXDIR = ROOT / "effects"
 WEB = next((p for p in (HERE.parent / "web", HERE.parent / "desktop" / "web") if (p / "index.html").exists()), None)
 W, H = 1920, 1080
 BAR_H = 90
-IMG_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
+IMG_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")
+VID_EXT = (".mp4", ".webm", ".mov", ".mkv")
+ANIM_EXT = (".gif", ".webp") + VID_EXT  # animated wallpapers: decoded once by ffmpeg (or PIL) into a raw frame cache
+ANIM = ROOT / "anim"
+AW, AH = W // 2, H // 2  # animated frames are cached at half size and scaled up when drawn (~2 MB per frame)
+ANIM_FPS = float(os.environ.get("KEYSCREEN_ANIM_FPS", 15))
+ANIM_MAX_S = float(os.environ.get("KEYSCREEN_ANIM_SECONDS", 6))
 
 
 # label, HID usage, width units. Modifiers use usage 0xE0..0xE7 and go to byte 0.
@@ -74,9 +82,10 @@ class Store:
     """Profiles, wallpapers, effect images and the touch log. Thread-safe; the API and renderer share it."""
 
     def __init__(self) -> None:
-        WALL.mkdir(parents=True, exist_ok=True)
-        FXDIR.mkdir(parents=True, exist_ok=True)
+        for d in (WALL, FXDIR, ANIM):
+            d.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        self.anim_status: dict[str, str] = {}  # name -> converting | ready | error: ...
         self.pfile = ROOT / "profiles.json"
         self.profiles = json.loads(self.pfile.read_text()) if self.pfile.exists() else {"default": dict(DEFAULT_PROFILE)}
         self.active = "default"
@@ -157,7 +166,86 @@ class Store:
             q(ev)
 
     def wallpapers(self) -> list[str]:
-        return sorted(p.name for p in WALL.iterdir() if p.suffix.lower() in IMG_EXT)
+        return sorted(p.name for p in WALL.iterdir() if p.suffix.lower() in IMG_EXT + VID_EXT)
+
+    # --- animated wallpapers -------------------------------------------------------------------
+    @staticmethod
+    def is_anim(name: str | None) -> bool:
+        return bool(name) and Path(name).suffix.lower() in ANIM_EXT
+
+    def anim_meta(self, name: str) -> dict | None:
+        m = ANIM / (name + ".json")
+        try:
+            return json.loads(m.read_text()) if m.exists() and (ANIM / (name + ".rgb")).exists() else None
+        except (OSError, ValueError):
+            return None
+
+    def ensure_anim(self, name: str) -> str:
+        """Return the cache status for an animated wallpaper, starting a background conversion if needed."""
+        if self.anim_meta(name):
+            self.anim_status[name] = "ready"
+        elif self.anim_status.get(name) != "converting" and not self.anim_status.get(name, "").startswith("error"):
+            self.anim_status[name] = "converting"
+            threading.Thread(target=self._convert, args=(name,), daemon=True).start()
+        return self.anim_status[name]
+
+    def drop_anim(self, name: str) -> None:
+        self.anim_status.pop(name, None)
+        for p in (ANIM / (name + ".rgb"), ANIM / (name + ".json"), ANIM / (name + ".rgb.tmp")):
+            if p.exists():
+                p.unlink()
+
+    def _convert(self, name: str) -> None:
+        src, tmp = WALL / name, ANIM / (name + ".rgb.tmp")
+        n = max(1, int(ANIM_FPS * ANIM_MAX_S))
+        try:
+            if shutil.which("ffmpeg"):
+                vf = f"fps={ANIM_FPS},scale={AW}:{AH}:force_original_aspect_ratio=increase,crop={AW}:{AH}"
+                r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(src), "-vf", vf, "-frames:v", str(n), "-f", "rawvideo", "-pix_fmt", "rgb24", str(tmp)],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=900)
+                if r.returncode:
+                    raise RuntimeError(r.stderr.decode(errors="replace").strip().splitlines()[-1:] or "ffmpeg failed")
+            elif src.suffix.lower() in (".gif", ".webp"):
+                self._pil_convert(src, tmp, n)
+            else:
+                raise RuntimeError("video wallpapers need ffmpeg on the board")
+            frames = tmp.stat().st_size // (AW * AH * 3)
+            if frames < 1:
+                raise RuntimeError("no frames decoded")
+            tmp.rename(ANIM / (name + ".rgb"))
+            (ANIM / (name + ".json")).write_text(json.dumps({"w": AW, "h": AH, "fps": ANIM_FPS, "frames": frames}))
+            self.anim_status[name] = "ready"
+        except Exception as e:
+            self.anim_status[name] = f"error: {str(e)[:160]}"
+            print(f"[anim] {name}: {e}", file=sys.stderr)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+        if self.profile()["wallpaper"] == name:
+            self.dirty = True
+        self.emit({"type": "wallpapers", "ready": name, "status": self.anim_status[name]})
+
+    @staticmethod
+    def _pil_convert(src: Path, out: Path, n: int) -> None:
+        from PIL import Image, ImageSequence
+
+        im, step, acc, count = Image.open(str(src)), 1000 / ANIM_FPS, 0.0, 0
+        with open(out, "wb") as f:
+            for fr in ImageSequence.Iterator(im):
+                acc += fr.info.get("duration") or 100
+                if acc < step:
+                    continue
+                rgb = fr.convert("RGB")
+                s = max(AW / rgb.width, AH / rgb.height)
+                rgb = rgb.resize((math.ceil(rgb.width * s), math.ceil(rgb.height * s)), Image.BILINEAR)
+                x, y = (rgb.width - AW) // 2, (rgb.height - AH) // 2
+                data = rgb.crop((x, y, x + AW, y + AH)).tobytes()
+                while acc >= step and count < n:  # resample the GIF's own timing to ANIM_FPS
+                    f.write(data)
+                    acc -= step
+                    count += 1
+                if count >= n:
+                    break
 
     def effect_images(self) -> list[str]:
         return sorted(p.name for p in FXDIR.iterdir() if p.suffix.lower() in IMG_EXT)
@@ -357,8 +445,11 @@ class Renderer:
         pg.mouse.set_visible(sim)
         self.scale = W / size[0]
         self.canvas = self.screen if self.scale == 1 else pg.Surface((W, H))
-        self.base = pg.Surface((W, H)).convert()
-        self.bg = self.base.copy()
+        self.bg = pg.Surface((W, H)).convert()  # current wallpaper frame
+        self.legends = pg.Surface((W, int(KB_H)), pg.SRCALPHA)  # white legends, drawn over bg at KB_Y
+        self.bar_surf = pg.Surface((W, BAR_H), pg.SRCALPHA)
+        self.kb_rect, self.bar_rect = pg.Rect(0, int(KB_Y), W, int(KB_H)), pg.Rect(0, 0, W, BAR_H)
+        self.anim: dict | None = None
         self.store, self.engine = store, engine
         font_names = "notosanscjksc,notosanscjk,wqyzenhei,wqymicrohei,droidsansfallbackfull,droidsansfallback"
         self.font = pg.font.SysFont(font_names, int(UNIT_Y * 0.34)) if pg.font.match_font(font_names) else pg.font.Font(None, int(UNIT_Y * 0.46))
@@ -391,16 +482,28 @@ class Renderer:
         img = pg.transform.smoothscale(img, (nw, nh))
         return img.subsurface(((nw - W) // 2, (nh - H) // 2, W, H)).copy()
 
+    def _load_anim(self, name: str) -> dict | None:
+        meta = self.store.anim_meta(name)
+        if not meta:
+            return None
+        data = memoryview((ANIM / (name + ".rgb")).read_bytes())
+        sz = AW * AH * 3
+        frames = [self.pg.image.frombuffer(data[i * sz:(i + 1) * sz], (AW, AH), "RGB").convert() for i in range(meta["frames"])]
+        print(f"[anim] {name}: {len(frames)} frames @ {meta['fps']} fps", file=sys.stderr)
+        return {"frames": frames, "fps": meta["fps"], "i": 0, "next": 0.0}
+
     def wallpaper(self, name: str | None):
-        if self.wall_cache[0] == name:
+        """Static: a W x H surface. Animated: {"frames", "fps", ...} once converted, else its first frame if decodable."""
+        anim_ready = self.store.is_anim(name) and self.store.ensure_anim(name) == "ready"
+        if self.wall_cache[0] == (name, anim_ready):
             return self.wall_cache[1]
         surf = None
         if name and (WALL / name).exists():
             try:
-                surf = self._cover(WALL / name)
+                surf = self._load_anim(name) if anim_ready else (self._cover(WALL / name) if Path(name).suffix.lower() in IMG_EXT else None)
             except Exception as e:  # corrupt upload must not kill the keyboard
                 print(f"[render] bad wallpaper {name}: {e}", file=sys.stderr)
-        self.wall_cache = (name, surf)
+        self.wall_cache = ((name, anim_ready), surf)
         return surf
 
     def fx_image(self, name: str | None):
@@ -438,39 +541,49 @@ class Renderer:
         self.prof = p
         self.accent = hex_color(pg, p["theme"], pg.Color("#38bdf8"))
         self.fx_color = hex_color(pg, p["effect_color"], self.accent)
-        self.bg.blit(self.wallpaper(p["wallpaper"]) or self.gradient, (0, 0))
-        self.base.blit(self.bg, (0, 0))
+        wall = self.wallpaper(p["wallpaper"])
+        if isinstance(wall, dict):
+            self.anim = wall
+            pg.transform.scale(wall["frames"][wall["i"]], (W, H), self.bg)
+        else:
+            self.anim = None
+            self.bg.blit(wall or self.gradient, (0, 0))
         self.keymap = {k["label"]: k for k in self.store.keys}
         self.pressed_caps = {}
         shadow = max(0, min(255, int(p["opacity"])))
+        self.legends.fill((0, 0, 0, 0))
         for k in self.store.keys:
-            self.base.blit(self.keycap(k, (240, 244, 250), shadow), k["rect"][:2])
-            r = self.pg.Rect(k["rect"]).clip(self.bg.get_rect())
-            cap = self.bg.subsurface(r).copy()  # pressed legend replaces the white one, so start from the bare wallpaper
-            cap.blit(self.keycap(k, self.accent, shadow), (0, 0))
-            self.pressed_caps[k["label"]] = cap
+            self.legends.blit(self.keycap(k, (240, 244, 250), shadow), (k["rect"][0], k["rect"][1] - KB_Y))
+            self.pressed_caps[k["label"]] = self.keycap(k, self.accent, shadow)
         self.bar_text = None
         self.draw_bar()
 
     def draw_bar(self):
+        """Re-renders the module bar surface when its text changes; returns its rect if it did."""
         wpm = len([t for t in self.engine.typed if t > time.time() - 60]) / 5
         items = {"clock": time.strftime("%H:%M"), "app": f"profile: {self.store.active}", "wpm": f"{wpm:.0f} WPM"}
         text = "   ".join(items.get(m, m) for m in self.prof["modules"])
         if text == self.bar_text:
             return None
         self.bar_text = text
-        pg, r = self.pg, self.pg.Rect(0, 0, W, BAR_H)
-        self.base.blit(self.bg, r, r)
-        bar = pg.Surface((W, BAR_H), pg.SRCALPHA)
-        bar.fill((0, 0, 0, 150))
+        self.bar_surf.fill((0, 0, 0, 150))
         x = 30
         for m in self.prof["modules"]:
             t = self.small.render(items.get(m, m), True, self.accent)
-            bar.blit(t, (x, (BAR_H - t.get_height()) // 2))
+            self.bar_surf.blit(t, (x, (BAR_H - t.get_height()) // 2))
             x += t.get_width() + 60
-        self.base.blit(bar, (0, 0))
-        self.canvas.blit(self.base, r, r)
-        return r
+        return self.bar_rect
+
+    def restore(self, r) -> None:
+        """Repaint a region of the canvas from the layers (wallpaper frame, legends, bar)."""
+        c = self.canvas
+        c.blit(self.bg, r, r)
+        k = r.clip(self.kb_rect)
+        if k:
+            c.blit(self.legends, k.topleft, k.move(0, -self.kb_rect.y))
+        b = r.clip(self.bar_rect)
+        if b:
+            c.blit(self.bar_surf, b.topleft, b)
 
     def draw_fx(self, e, now: float):
         pg = self.pg
@@ -518,20 +631,31 @@ class Renderer:
         if self.store.dirty:
             self.store.dirty = False
             self.rebuild()
-            self.canvas.blit(self.base, (0, 0))
             full = True
+        a = self.anim
+        if a and now >= a["next"]:
+            a["i"] = (a["i"] + 1) % len(a["frames"])
+            a["next"] = (a["next"] if now - a["next"] < 0.5 else now) + 1 / a["fps"]
+            pg.transform.scale(a["frames"][a["i"]], (W, H), self.bg)
+            full = True
+        bar = self.draw_bar()
+        if full:
+            self.restore(self.canvas.get_rect())
+            dirty = []
         else:
             for r in self.prev:
-                self.canvas.blit(self.base, r, r)
-        dirty = list(self.prev)
-        bar = self.draw_bar()
-        if bar:
-            dirty.append(bar)
+                self.restore(r)
+            dirty = list(self.prev)
+            if bar:
+                self.restore(bar)
+                dirty.append(bar)
         cur = []
         for label in self.engine.pressed_view:
             k = self.keymap.get(label)
             if k:
-                cur.append(self.canvas.blit(self.pressed_caps[label], k["rect"][:2]))
+                r = pg.Rect(k["rect"]).clip(self.canvas.get_rect())
+                self.restore(r)
+                cur.append(self.canvas.blit(self.pressed_caps[label], r.topleft))
         p = self.prof
         while self.fx_queue:
             t0, label, x, y = self.fx_queue.popleft()
@@ -600,18 +724,18 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
     ok = lambda **kw: web.json_response({"ok": True, **kw})
     bad = lambda msg, status=400: web.json_response({"ok": False, "error": msg}, status=status)
 
-    async def save_uploads(req, folder: Path) -> list | web.Response:
+    async def save_uploads(req, folder: Path, exts: tuple, limit_mb: int) -> list | web.Response:
         reader = await req.multipart()
         saved = []
         async for part in reader:
             if not part.filename:
                 continue
             name = Path(part.filename).name.replace(" ", "_")
-            if Path(name).suffix.lower() not in IMG_EXT:
-                return bad("only png/jpg/bmp/gif")
+            if Path(name).suffix.lower() not in exts:
+                return bad("only " + "/".join(e[1:] for e in exts))
             data = await part.read(decode=False)
-            if len(data) > 20 * 1024 * 1024:
-                return bad("file > 20MB", 413)
+            if len(data) > limit_mb * 1024 * 1024:
+                return bad(f"file > {limit_mb}MB", 413)
             (folder / name).write_bytes(data)
             saved.append(name)
         return saved
@@ -633,6 +757,7 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
         lat = sorted(engine.latency_ms)
         return ok(active=store.active, profile=store.profile(), profiles=list(store.profiles), wallpapers=store.wallpapers(), keys=store.keys, size=[W, H],
                   effects=EFFECTS, effect_images=store.effect_images(), unit_px=round(UNIT, 1), keyboard=[round(KB_X), round(KB_Y), round(KB_W), round(KB_H)],
+                  anim={n: store.ensure_anim(n) for n in store.wallpapers() if store.is_anim(n)}, video_ext=list(VID_EXT),
                   latency_ms=round(sum(lat) / len(lat), 3) if lat else None, latency_p95_ms=round(lat[int(len(lat) * 0.95) - 1 if len(lat) > 1 else 0], 3) if lat else None)
 
     @r.get("/api/wallpapers")
@@ -641,11 +766,16 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
 
     @r.post("/api/wallpapers")
     async def upload(req):
-        saved = await save_uploads(req, WALL)
+        saved = await save_uploads(req, WALL, IMG_EXT + VID_EXT, 80)
         if not isinstance(saved, list):
             return saved
+        status = {}
+        for n in saved:
+            if store.is_anim(n):
+                store.drop_anim(n)  # re-upload under the same name -> reconvert
+                status[n] = store.ensure_anim(n)
         store.emit({"type": "wallpapers", "saved": saved})
-        return ok(saved=saved)
+        return ok(saved=saved, anim=status)
 
     @r.get("/api/wallpapers/{name}")
     async def wall_file(req):
@@ -658,6 +788,7 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
         if not p.exists():
             return bad("not found", 404)
         p.unlink()
+        store.drop_anim(p.name)
         for name, prof in list(store.profiles.items()):
             if prof.get("wallpaper") == p.name:
                 store.put_profile(name, {"wallpaper": None})
@@ -670,7 +801,7 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
 
     @r.post("/api/effects")
     async def effect_upload(req):
-        saved = await save_uploads(req, FXDIR)
+        saved = await save_uploads(req, FXDIR, IMG_EXT, 20)
         if not isinstance(saved, list):
             return saved
         for n in saved:
@@ -800,7 +931,7 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
         resp.headers.update({"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS", "Access-Control-Allow-Headers": "Content-Type"})
         return resp
 
-    app = web.Application(middlewares=[cors], client_max_size=25 * 1024 * 1024)
+    app = web.Application(middlewares=[cors], client_max_size=100 * 1024 * 1024)
     app.add_routes(r)
     if WEB:
         app.router.add_static("/ui", WEB)
