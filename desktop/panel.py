@@ -54,33 +54,29 @@ public class KL{[DllImport("user32.dll")]public static extern IntPtr LoadKeyboar
 [DllImport("user32.dll")]public static extern IntPtr GetKeyboardLayout(int t);[DllImport("user32.dll")]public static extern int GetWindowThreadProcessId(IntPtr h,IntPtr p);
 [DllImport("user32.dll")]public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);}
 "@
-$w=[KL]::GetForegroundWindow();[Console]::Out.WriteLine([KL]::GetKeyboardLayout([KL]::GetWindowThreadProcessId($w,[IntPtr]::Zero)).ToInt64())
-$h=if("MODE" -eq "load"){[KL]::LoadKeyboardLayout("VAL",1)}else{[IntPtr][long]"VAL"};[void][KL]::PostMessage($w,0x50,[IntPtr]::Zero,$h)"""
+$v="VAL";if($v -eq "home"){$v=(Get-ItemProperty "HKCU:\Keyboard Layout\Preload")."1"}
+[void][KL]::PostMessage([KL]::GetForegroundWindow(),0x50,[IntPtr]::Zero,[KL]::LoadKeyboardLayout($v,1))"""
 
 
-def host_layout(lang: str, home: list) -> None:
-    """Switch the foreground Windows app to the layout matching the board's legends; 'en' restores the user's own."""
+def host_layout(lang: str) -> None:
+    """Switch the foreground Windows app to the layout matching the board's legends; 'en' goes back to the user's first input language."""
     import base64
-    target = LANG_KLID.get(lang) or (home[0] if home else None)
     ps = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-    if not target or not Path(ps).exists():
+    if not Path(ps).exists():
         return
-    enc = base64.b64encode(KL_PS.replace("MODE", "load" if lang in LANG_KLID else "hkl").replace("VAL", str(target)).encode("utf-16-le")).decode()
+    enc = base64.b64encode(KL_PS.replace("VAL", LANG_KLID.get(lang, "home")).encode("utf-16-le")).decode()
     r = subprocess.run([ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc], capture_output=True, timeout=20)
-    out = r.stdout.decode(errors="replace").split()
     if r.returncode:
         print(f"[lang] host layout switch failed: {r.stderr.decode('gbk', errors='replace')[:300]}")
-    if out and not home and lang in LANG_KLID:
-        home.append(out[0])
 
 
 def lang_sync(board: str, stop: threading.Event) -> None:
-    last, home = "en", []
+    last = "en"
     while not stop.wait(1.5):
         try:
             lang = json.load(urllib.request.urlopen(board + "/api/state", timeout=3))["profile"].get("lang", "en")
             if lang != last:
-                host_layout(lang, home)
+                host_layout(lang)
                 print(f"[lang] {last} -> {lang}")
             last = lang
         except Exception:
