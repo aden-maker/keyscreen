@@ -46,6 +46,43 @@ while($true){$p=0;[void][FG]::GetWindowThreadProcessId([FG]::GetForegroundWindow
 if($n -ne $last){[Console]::Out.WriteLine($n);[Console]::Out.Flush();$last=$n};Start-Sleep -Milliseconds 700}"""
 
 
+LANG_KLID = {"ru": "00000419", "fr": "0000040C", "de": "00000407"}  # Windows layouts shipped with every install
+KL_PS = r"""Add-Type @"
+using System;using System.Runtime.InteropServices;
+public class KL{[DllImport("user32.dll")]public static extern IntPtr LoadKeyboardLayout(string id,uint f);[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")]public static extern IntPtr GetKeyboardLayout(int t);[DllImport("user32.dll")]public static extern int GetWindowThreadProcessId(IntPtr h,IntPtr p);
+[DllImport("user32.dll")]public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);}
+"@
+$w=[KL]::GetForegroundWindow();[Console]::Out.WriteLine([KL]::GetKeyboardLayout([KL]::GetWindowThreadProcessId($w,[IntPtr]::Zero)).ToInt64())
+$h=if("MODE" -eq "load"){[KL]::LoadKeyboardLayout("VAL",1)}else{[IntPtr][long]"VAL"};[void][KL]::PostMessage($w,0x50,[IntPtr]::Zero,$h)"""
+
+
+def host_layout(lang: str, home: list) -> None:
+    """Switch the foreground Windows app to the layout matching the board's legends; 'en' restores the user's own."""
+    import base64
+    target = LANG_KLID.get(lang) or (home[0] if home else None)
+    ps = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+    if not target or not Path(ps).exists():
+        return
+    enc = base64.b64encode(KL_PS.replace("MODE", "load" if lang in LANG_KLID else "hkl").replace("VAL", str(target)).encode("utf-16-le")).decode()
+    out = subprocess.run([ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc], capture_output=True, text=True, timeout=20).stdout.split()
+    if out and not home and lang in LANG_KLID:
+        home.append(out[0])
+
+
+def lang_sync(board: str, stop: threading.Event) -> None:
+    last, home = "en", []
+    while not stop.wait(1.5):
+        try:
+            lang = json.load(urllib.request.urlopen(board + "/api/state", timeout=3))["profile"].get("lang", "en")
+            if lang != last:
+                host_layout(lang, home)
+                print(f"[lang] {last} -> {lang}")
+            last = lang
+        except Exception:
+            pass
+
+
 def board_post(board: str, path: str, body: dict) -> None:
     req = urllib.request.Request(board + path, data=json.dumps(body, ensure_ascii=False).encode(), headers={"Content-Type": "application/json"}, method="POST")
     urllib.request.urlopen(req, timeout=5).read()
@@ -221,6 +258,11 @@ def offline_reply(board: str, prompt: str) -> str:
         return json.load(urllib.request.urlopen(req, timeout=5))
     tag = "（离线模式）"
     try:
+        want = next((c for c, words in (("ru", ("俄语", "俄文")), ("fr", ("法语", "法文")), ("de", ("德语", "德文")), ("en", ("英语", "英文")),
+                                        ("next", ("set_language", "换语言", "切换语言"))) if any(w in prompt for w in words)), None)
+        if want:
+            r = call("POST", "/api/lang", {"lang": want})
+            return tag + f"键盘已切换为{r['name']}布局～"
         if "校准" in prompt or "adjust_key" in prompt:
             ks = [k for k in call("GET", "/api/touch/stats?since=0")["keys"] if k["count"] >= 10 and k["key"] != "Fn"]
             ks = sorted(ks, key=lambda k: -math.hypot(k["avg_dx"], k["avg_dy"]))[:2]
@@ -312,6 +354,7 @@ def main() -> None:
     if not a.no_watch:
         threading.Thread(target=watch, args=(a.board, threading.Event()), daemon=True).start()
     threading.Thread(target=chat_bridge, args=(a.board, threading.Event()), daemon=True).start()
+    threading.Thread(target=lang_sync, args=(a.board, threading.Event()), daemon=True).start()
     handler = lambda *x, **k: Handler(*x, directory=str(web), **k)
     print(f"[panel] http://127.0.0.1:{a.port}  board={a.board}")
     ThreadingHTTPServer(("0.0.0.0", a.port), handler).serve_forever()

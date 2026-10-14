@@ -63,6 +63,13 @@ UNIT = min(UNIT_X, UNIT_Y)  # scale for effects
 GAP = 8
 RADIUS = int(UNIT * 0.12)
 EFFECTS = ["none", "glow", "ripple", "burst", "image"]
+# Legends per keyboard language. HID sends key positions, not characters: the PC must use the matching layout
+# (desktop/panel.py switches Windows to LANG_KLID[lang] when the language changes).
+_RU = dict(zip("QWERTYUIOP[]ASDFGHJKL;'ZXCVBNM,./", "ЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮ."))
+_FR = {**dict(zip("QWAZ;M,./[]'\\", "AZQWM,;:!^$ù*")), **dict(zip("1234567890-", ["1&", "2é", '3"', "4'", "5(", "6-", "7è", "8_", "9ç", "0à", ")"]))}
+_DE = {**dict(zip("YZ;'[]-=/\\", "ZYÖÄÜ+ß´-#"))}
+LANGS = {"en": {}, "ru": {**_RU, "Space": "Русский"}, "fr": {**_FR, "Space": "Français"}, "de": {**_DE, "Space": "Deutsch"}}
+LANG_NAMES = {"en": "英语", "ru": "俄语", "fr": "法语", "de": "德语"}
 DEFAULT_PROFILE = {"wallpaper": None, "theme": "#38bdf8", "opacity": 170, "legends": {}, "offsets": {}, "modules": ["clock", "app", "wpm"],
                    "effect": "ripple", "effect_color": "", "effect_ms": 450, "effect_image": None, "key_effects": {}}
 
@@ -89,6 +96,9 @@ class Store:
         self.pfile = ROOT / "profiles.json"
         self.profiles = json.loads(self.pfile.read_text()) if self.pfile.exists() else {"default": dict(DEFAULT_PROFILE)}
         self.active = "default"
+        self.lfile = ROOT / "lang.txt"
+        self.lang = self.lfile.read_text().strip() if self.lfile.exists() else "en"
+        self.lang = self.lang if self.lang in LANGS else "en"
         self.db = sqlite3.connect(str(ROOT / "touch.db"), check_same_thread=False)
         self.db.execute("create table if not exists touch(t real, x real, y real, key text, dx real, dy real, duration real, hit integer, profile text)")
         self.dirty = True
@@ -100,7 +110,17 @@ class Store:
 
     def profile(self, name: str | None = None) -> dict:
         with self.lock:
-            return {**DEFAULT_PROFILE, **self.profiles.get(name or self.active, {})}
+            return {**DEFAULT_PROFILE, **self.profiles.get(name or self.active, {}), "lang": self.lang}
+
+    def set_lang(self, lang: str) -> str:
+        """Keyboard language is global, not per app profile. 'next' cycles en -> ru -> fr -> de."""
+        with self.lock:
+            order = list(LANGS)
+            self.lang = order[(order.index(self.lang) + 1) % len(order)] if lang == "next" else lang
+            self.lfile.write_text(self.lang)
+            self.dirty = True
+        self.emit({"type": "lang", "lang": self.lang})
+        return self.lang
 
     def save(self) -> None:
         with self.lock:
@@ -615,7 +635,7 @@ class Renderer:
         pg = self.pg
         rx, ry, rw, rh = k["rect"]
         s = pg.Surface((int(rw), int(rh)), pg.SRCALPHA)
-        label = str(self.prof["legends"].get(k["label"], k["label"]))
+        label = str(self.prof["legends"].get(k["label"], LANGS.get(self.prof.get("lang"), {}).get(k["label"], k["label"])))
         pos = lambda t: ((s.get_width() - t.get_width()) // 2, (s.get_height() - t.get_height()) // 2)
         if shadow_alpha:
             sh = self.font.render(label, True, (0, 0, 0))
@@ -992,6 +1012,14 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
         if body.get("activate"):
             store.activate(req.match_info["app"])
         return ok(profile=p)
+
+    @r.post("/api/lang")
+    async def set_lang(req):
+        lang = str((await req.json()).get("lang", ""))
+        if lang != "next" and lang not in LANGS:
+            return bad(f"unknown language {lang}, use one of {list(LANGS)} or next")
+        lang = store.set_lang(lang)
+        return ok(lang=lang, name=LANG_NAMES[lang], languages=LANG_NAMES)
 
     # -- on-screen Agnes chat: the board queues prompts, desktop/panel.py runs them through AGH and posts replies --
     chat = renderer.widgets.chat if renderer.widgets is not None else None

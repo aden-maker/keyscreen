@@ -88,6 +88,14 @@ def make_device() -> tuple[Device, Any]:
         p = r["profile"]
         return reply(f"profile {app} saved: legends={json.dumps(p.get('legends', {}), ensure_ascii=False)} modules={p.get('modules')}{' (activated)' if activate else ''}", p)
 
+    @dev.tool("Switch the keyboard language: en (English QWERTY), ru (Russian ЙЦУКЕН), fr (French AZERTY), de (German QWERTZ), "
+              "or next to cycle. Key legends change on the board and the PC is switched to the matching layout.",
+              params={"lang": {"type": "string", "enum": ["en", "ru", "fr", "de", "next"]}}, required=["lang"], timeout=10)
+    async def set_language(call_: Any, lang: str) -> dict:
+        r = await call("POST", "/api/lang", {"lang": lang})
+        dev.update(lang=r["lang"])
+        return reply(f"keyboard language is now {r['lang']} ({r['name']})", r)
+
     @dev.tool("Nudge one key's touch area by dx/dy pixels (each clamped to ±40) to reduce misses.",
               params={"key": {"type": "string"}, "dx": {"type": "number", "minimum": -20, "maximum": 20}, "dy": {"type": "number", "minimum": -20, "maximum": 20}},
               required=["key", "dx", "dy"], timeout=10)
