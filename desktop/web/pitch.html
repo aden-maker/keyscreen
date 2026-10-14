@@ -22,7 +22,14 @@
   .arch .card { text-align: center; min-width: 13vw; }
   .arch i { font-style: normal; font-size: 4vh; color: #b0418a; }
   img.exp { max-height: 52vh; max-width: 100%; border-radius: 18px; }
-  @media print { @page { size: 1280px 720px; margin: 0; } section { display: flex !important; position: relative; width: 1280px; height: 720px; page-break-after: always; animation: none; } .nav { display: none; } }
+  @media print {
+    @page { size: 1280px 720px; margin: 0; }
+    body { overflow: visible; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    section { display: flex !important; position: relative !important; inset: auto; width: 1280px; height: 720px; overflow: hidden;
+              padding: 36px 64px; gap: 16px; break-after: page; animation: none !important; opacity: 1 !important; }
+    h1 { font-size: 50px; } h2 { font-size: 36px; } p, li, td, th { font-size: 17px; } .card b { font-size: 20px; } .big { font-size: 40px; }
+    img.exp { max-height: 300px; } .arch i { font-size: 28px; } .nav { display: none; }
+  }
   .nav { position: fixed; bottom: 2vh; right: 3vw; font-size: 2vh; opacity: .6; }
 </style>
 </head>
