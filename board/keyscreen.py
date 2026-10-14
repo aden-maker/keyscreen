@@ -1048,6 +1048,10 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
             store.activate(req.match_info["app"])
         return ok(profile=p)
 
+    @r.get("/api/lang")
+    async def get_lang(_):
+        return ok(lang=store.lang)
+
     @r.post("/api/lang")
     async def set_lang(req):
         lang = str((await req.json()).get("lang", ""))

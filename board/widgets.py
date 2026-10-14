@@ -22,7 +22,7 @@ PRESETS = [  # (chip label, prompt)
     ("二次元模式", "用 keyscreen-01 的 list_wallpapers 看键盘上有哪些壁纸，选一张最有二次元/活泼感觉的，用 set_wallpaper 应用到 default profile，主题色选粉色或天蓝色系。一句话说明理由。"),
     ("写代码配色", "我要写代码了。用 keyscreen-01 的 list_wallpapers 选一张最适合长时间写代码的壁纸，set_wallpaper 应用到 default profile，配协调的主题色和不透明度。一句话说明理由。"),
     ("校准按键", "调用 keyscreen-01 的 get_touch_stats（since_minutes=0），在 count≥10 的键中（Fn 除外）选出偏移最明显的 2 个，用 adjust_key 按平均偏移的一半（限 ±15 px）微调，一句话汇报。"),
-    ("换语言键盘", "用 keyscreen-01 的 set_language（lang=next）把键盘切到下一种语言，用一句中文介绍这种布局的特点，再附一句该语言的问候。"),
+    ("换语言键盘", "换语言键盘"),
     ("分析打字", "用 keyscreen-01 的 get_touch_stats（since_minutes=0）用两句话总结我的打字：误触率、最容易按偏的键、一条建议。不要修改设置。"),
 ]
 TAP_LINES = ["诶嘿~", "戳我干嘛啦 (>_<)", "Agnes 在这里哦~", "今天也要加油！", "要好好打字哦～", "嗯？有事找我吗？", "点右下角就能和我说话啦"]
@@ -54,6 +54,22 @@ def shadow_text(pg, font, text: str, color):
     return s
 
 
+LANG_WORDS = {"ru": ("俄语", "俄文", "俄罗斯"), "fr": ("法语", "法文"), "de": ("德语", "德文"), "en": ("英语", "英文", "默认键盘")}
+LANG_INTRO = {"en": "已切回英语 QWERTY 键盘，电脑也恢复你原来的输入法～",
+              "ru": "已切到俄语 ЙЦУКЕН 键盘：西里尔字母按使用频率排布，最常用的 А、О 在中排正中。Привет! 你好！",
+              "fr": "已切到法语 AZERTY 键盘：A/Q、Z/W 互换，数字要按 Shift，é è ç à 直接在数字行。Bonjour ! 你好！",
+              "de": "已切到德语 QWERTZ 键盘：Y/Z 互换，Ö Ä Ü ß 都有独立键位。Hallo! 你好！"}
+
+
+def lang_command(prompt: str) -> str | None:
+    """'next' for the language chip, a language code for short commands like 切换到俄语键盘, else None."""
+    if "set_language" in prompt or prompt in ("换语言", "切换语言", "换语言键盘"):
+        return "next"
+    if len(prompt) <= 16 and any(w in prompt for w in ("键盘", "切换", "换成", "切到", "换到")):
+        return next((c for c, ws in LANG_WORDS.items() if any(w in prompt for w in ws)), None)
+    return None
+
+
 class Chat:
     def __init__(self, store) -> None:
         self.store = store
@@ -83,6 +99,9 @@ class Chat:
             self.items = (self.items + [it])[-12:]
         self.dirty = True
         self.store.emit({"type": "chat", "status": "queued", "id": it["id"]})
+        lang = lang_command(prompt)
+        if lang and hasattr(self.store, "set_lang"):  # instant on the board; no round trip to Agnes
+            self.reply(it["id"], LANG_INTRO[self.store.set_lang(lang)])
         return it
 
     def pending(self) -> dict | None:

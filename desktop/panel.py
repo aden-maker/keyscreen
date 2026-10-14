@@ -54,30 +54,52 @@ public class KL{[DllImport("user32.dll")]public static extern IntPtr LoadKeyboar
 [DllImport("user32.dll")]public static extern IntPtr GetKeyboardLayout(int t);[DllImport("user32.dll")]public static extern int GetWindowThreadProcessId(IntPtr h,IntPtr p);
 [DllImport("user32.dll")]public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);}
 "@
-$v="VAL";if($v -eq "home"){$v=(Get-ItemProperty "HKCU:\Keyboard Layout\Preload")."1"}
-[void][KL]::PostMessage([KL]::GetForegroundWindow(),0x50,[IntPtr]::Zero,[KL]::LoadKeyboardLayout($v,1))"""
+$home=(Get-ItemProperty "HKCU:\Keyboard Layout\Preload")."1"
+while(($v=[Console]::In.ReadLine()) -ne $null){if($v -eq "home"){$v=$home}
+[void][KL]::PostMessage([KL]::GetForegroundWindow(),0x50,[IntPtr]::Zero,[KL]::LoadKeyboardLayout($v,1));[Console]::Out.WriteLine("ok");[Console]::Out.Flush()}"""
 
 
-def host_layout(lang: str) -> None:
-    """Switch the foreground Windows app to the layout matching the board's legends; 'en' goes back to the user's first input language."""
-    import base64
-    ps = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
-    if not Path(ps).exists():
-        return
-    enc = base64.b64encode(KL_PS.replace("VAL", LANG_KLID.get(lang, "home")).encode("utf-16-le")).decode()
-    r = subprocess.run([ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc], capture_output=True, timeout=20)
-    if r.returncode:
-        print(f"[lang] host layout switch failed: {r.stderr.decode('gbk', errors='replace')[:300]}")
+class HostLayout:
+    """One long-lived PowerShell (Add-Type compiles once, ~2 s) so a switch then takes a few ms."""
+
+    def __init__(self) -> None:
+        self.proc, self.lock = None, threading.Lock()
+
+    def __call__(self, lang: str) -> None:
+        with self.lock:
+            self._switch(lang)
+
+    def _switch(self, lang: str) -> None:
+        import base64
+        ps = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+        if not Path(ps).exists():
+            return
+        if self.proc is None or self.proc.poll() is not None:
+            enc = base64.b64encode(KL_PS.encode("utf-16-le")).decode()
+            self.proc = subprocess.Popen([ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
+                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
+        try:
+            self.proc.stdin.write(LANG_KLID.get(lang, "home") + "\n")
+            self.proc.stdin.flush()
+            self.proc.stdout.readline()
+        except OSError as e:
+            print(f"[lang] host layout switch failed: {e}")
+            self.proc = None
+
+
+host_layout = HostLayout()
 
 
 def lang_sync(board: str, stop: threading.Event) -> None:
     last = "en"
-    while not stop.wait(1.5):
+    threading.Thread(target=host_layout, args=("en",), daemon=True).start()  # warm up PowerShell now, not on first switch
+    while not stop.wait(0.3):
         try:
-            lang = json.load(urllib.request.urlopen(board + "/api/state", timeout=3))["profile"].get("lang", "en")
+            lang = json.load(urllib.request.urlopen(board + "/api/lang", timeout=3)).get("lang", "en")
             if lang != last:
+                t0 = time.time()
                 host_layout(lang)
-                print(f"[lang] {last} -> {lang}")
+                print(f"[lang] {last} -> {lang} ({(time.time() - t0) * 1000:.0f} ms)")
             last = lang
         except Exception:
             pass
@@ -305,7 +327,7 @@ def chat_bridge(board: str, stop: threading.Event) -> None:
         print(f"[chat] #{it['id']} {it['prompt'][:60]}")
         res = ask_agnes(it["prompt"], timeout=90)
         text = res.get("text") or res.get("error") or "(无回复)"
-        if not res.get("ok") or not res.get("text"):
+        if not res.get("ok") or not res.get("text") or re.match(r"^\s*agnes: ", res.get("text", "")):
             print(f"[chat] Agnes unavailable ({res.get('error')}), local fallback")
             text, res = offline_reply(board, it["prompt"]), {"ok": True}
         try:
