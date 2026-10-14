@@ -44,6 +44,7 @@ def make_device() -> tuple[Device, Any]:
     dev = Device("keyscreen-01", "display", name="KeyScreen touch keyboard", model="LubanCat 1H + touch display", state={
         "profile": {"type": "string", "writable": True, "description": "active per-app profile"},
         "wallpaper": {"type": "string", "description": "wallpaper of the active profile"},
+        "lang": {"type": "string", "description": "keyboard language: en, ru, fr or de"},
         "miss_rate": {"type": "number", "min": 0, "max": 1, "description": "share of touches that missed every key", "alert": {"warn": 0.1, "bad": 0.2}},
     })
     touch = dev.source("touch", "values", "typing statistics from the touch surface", hz=1, default=True, fields={
