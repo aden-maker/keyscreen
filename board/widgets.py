@@ -63,6 +63,14 @@ class Chat:
         self.ime, self.zh, self.py, self.page = None, True, "", 0  # Chinese pinyin input by default
         self._cands = ("", [], "")
         self.key_t = 0.0
+        self.last_poll = 0.0  # desktop/panel.py polls every second; silence means the PC side is not there
+
+    def expire(self, now: float) -> None:
+        for it in list(self.items):
+            if it["status"] == "queued" and now - it["t"] > 12 and now - self.last_poll > 8:
+                self.reply(it["id"], "电脑端还没连上～检查一下 USB 线；电脑开机登录后会自动连接哦", ok=False)
+            elif it["status"] == "running" and now - it["t"] > 150:
+                self.reply(it["id"], "Agnes 这次想太久了，换个说法再试试？", ok=False)
 
     def send(self, prompt: str) -> dict:
         prompt = prompt.strip()
@@ -77,6 +85,7 @@ class Chat:
         return it
 
     def pending(self) -> dict | None:
+        self.last_poll = time.time()
         with self.lock:
             for it in self.items:
                 if it["status"] == "queued":
@@ -440,6 +449,8 @@ class Widgets:
             self.caret_on, self.caret_t = True, 0.0
         if self.open and not self.chat.busy and now - self.chat.typed_at > 60:
             self.set_open(False)
+        if int(now) != int(now - dt):
+            self.chat.expire(now)
         last = self.chat.last_reply()
         if last and last["id"] != self.seen_reply:
             self.seen_reply = last["id"]

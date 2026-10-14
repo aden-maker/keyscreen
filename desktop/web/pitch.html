@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>KeyScreen · 答辩</title>
+<style>
+  :root { --pink: #ff8ac6; --sky: #6cc6ff; --ink: #2a1d3d; }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; background: linear-gradient(135deg, #ffe3f1, #dff2ff); color: var(--ink); overflow: hidden; }
+  section { position: absolute; inset: 0; padding: 6vh 7vw; display: none; flex-direction: column; justify-content: center; gap: 3vh; }
+  section.on { display: flex; animation: in .45s ease; }
+  @keyframes in { from { opacity: 0; transform: translateY(18px); } }
+  h1 { font-size: 7vh; } h2 { font-size: 5vh; } p, li, td, th { font-size: 2.6vh; line-height: 1.6; }
+  .tag { color: #b0418a; font-weight: 700; letter-spacing: .1em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(22vw, 1fr)); gap: 2.4vh; }
+  .card { background: rgba(255,255,255,.72); border-radius: 22px; padding: 2.6vh 2vw; box-shadow: 0 10px 30px rgba(120,80,160,.12); }
+  .card b { display: block; font-size: 3vh; margin-bottom: .8vh; }
+  .big { font-size: 6vh; font-weight: 800; background: linear-gradient(90deg, var(--pink), var(--sky)); -webkit-background-clip: text; color: transparent; }
+  table { border-collapse: collapse; background: rgba(255,255,255,.72); border-radius: 18px; overflow: hidden; }
+  td, th { padding: 1vh 1.6vw; text-align: left; } tr:nth-child(even) td { background: rgba(255,138,198,.08); }
+  .arch { display: flex; align-items: center; gap: 1.2vw; flex-wrap: wrap; }
+  .arch .card { text-align: center; min-width: 13vw; }
+  .arch i { font-style: normal; font-size: 4vh; color: #b0418a; }
+  img.exp { max-height: 52vh; max-width: 100%; border-radius: 18px; }
+  .nav { position: fixed; bottom: 2vh; right: 3vw; font-size: 2vh; opacity: .6; }
+</style>
+</head>
+<body>
+<section class="on">
+  <p class="tag">2026 江苏省 AI+科学与工程创新实践黑客松</p>
+  <h1>KeyScreen：会思考的触屏键盘</h1>
+  <p style="font-size:3.2vh">一块触摸屏，就是一把即插即用的 USB 键盘；Agnes 读懂你的打字习惯，<br>实时改写键盘的样子与键位。</p>
+  <p class="big">插上即用 · AI 个性化 · 实测数据说话</p>
+</section>
+
+<section>
+  <h2>问题：键盘千人一面</h2>
+  <div class="grid">
+    <div class="card"><b>固定的键位</b>每个人手指落点不同，触屏键盘却给所有人同一套按键区域，误触来自"人和键的系统偏差"。</div>
+    <div class="card"><b>固定的样子</b>写代码、打游戏、演示、休息，需要的键盘不一样，实体键盘做不到随场景变化。</div>
+    <div class="card"><b>AI 只在屏幕里</b>大模型很会聊天，但很少真正动手改变身边的硬件。</div>
+  </div>
+  <p>我们的答案：<b>让 Agnes 通过设备协议（MHS）直接读写键盘</b>，数据驱动地为每个人调出最合适的键盘。</p>
+</section>
+
+<section>
+  <h2>系统架构</h2>
+  <div class="arch">
+    <div class="card"><b>触摸屏</b>多点触控 evdev</div><i>→</i>
+    <div class="card"><b>LubanCat 1H</b>渲染 · 判键 · 看板娘<br>拼音输入法 · 天气卡片</div><i>→</i>
+    <div class="card"><b>USB HID</b>标准键盘<br>无需驱动</div><i>→</i>
+    <div class="card"><b>电脑</b>任意系统直接打字</div>
+  </div>
+  <div class="arch">
+    <div class="card"><b>agnes-3.0-flash</b>理解意图 · 规划</div><i>⇄</i>
+    <div class="card"><b>AgnesHub + AGH</b>工具调用</div><i>⇄</i>
+    <div class="card"><b>MHS 设备 keyscreen-01</b>get_touch_stats · adjust_key<br>set_wallpaper · pet_act …</div><i>⇄</i>
+    <div class="card"><b>板端 REST API</b>USB 网络</div>
+  </div>
+</section>
+
+<section>
+  <h2>科学实验：AI 个性化校准能减少误触吗？</h2>
+  <p><b>假设</b>：误触主要来自每个键上稳定的落点偏差；Agnes 读取统计后按偏差平移键位，可降低偏差和误触率。
+     <b>方法</b>：同一人输入同一段文本约 3 分钟 → Agnes 调用 get_touch_stats + adjust_key 校准 → 再输入 3 分钟，对比。</p>
+  <div style="display:flex; gap:2vw; align-items:center; flex-wrap:wrap">
+    <img class="exp" src="exp.svg" alt="实验结果" onerror="this.replaceWith(Object.assign(document.createElement('p'),{textContent:'（运行 desktop/experiment.py 生成实验图）'}))">
+    <div id="exptable"></div>
+  </div>
+</section>
+
+<section>
+  <h2>工程指标（板上实测）</h2>
+  <table>
+    <tr><th>指标</th><th>数值</th><th>说明</th></tr>
+    <tr><td>触摸 → USB HID 发送</td><td>平均 1.75 ms，p95 3.3 ms</td><td>按下即发，与电脑打字同步</td></tr>
+    <tr><td>按键 → 屏幕更新（助手输入）</td><td>中位数约 34 ms</td><td>分区缓存 + 按键唤醒渲染</td></tr>
+    <tr><td>屏幕刷新耗时</td><td>48 → 27 ms</td><td>定位到桌面合成器并关闭</td></tr>
+    <tr><td>拼音整句转换</td><td>&lt; 1 ms / 键</td><td>4.7 万词条 Viterbi + 简拼 + 自学习</td></tr>
+    <tr><td>稳定性</td><td>触摸线热插拔自恢复，systemd 守护</td><td>systemd 开机自启，电脑端插上自动连接</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>亮点</h2>
+  <div class="grid">
+    <div class="card"><b>AI 真正动手</b>Agnes 通过 MHS 工具读数据、改键位、换壁纸、指挥看板娘，闭环有日志可查。</div>
+    <div class="card"><b>屏上完成对话</b>不用切窗口：键盘上半屏就是 Agnes 助手，自带搜狗式整句拼音。</div>
+    <div class="card"><b>即插即用 + 离线保底</b>插上自动连接；断网时快捷指令改由本地规则执行，演示不中断。</div>
+    <div class="card"><b>有温度的交互</b>可拖拽、会跑会跳的看板娘，苹果风格天气卡片，视频壁纸。</div>
+  </div>
+</section>
+
+<section>
+  <h2>下一步</h2>
+  <div class="grid">
+    <div class="card"><b>无障碍</b>为手部不便用户自动放大常用键、合并误触区域。</div>
+    <div class="card"><b>场景键盘</b>按前台应用自动切换键位与皮肤（已能识别前台应用）。</div>
+    <div class="card"><b>更大样本</b>多人、多天的对照实验，研究触屏落点偏差规律。</div>
+  </div>
+  <p class="big">谢谢！欢迎上手体验 KeyScreen</p>
+</section>
+<div class="nav">← → 翻页 · <span id="n"></span></div>
+<script>
+  const s = [...document.querySelectorAll("section")]; let i = 0;
+  const go = d => { s[i].classList.remove("on"); i = Math.max(0, Math.min(s.length - 1, i + d)); s[i].classList.add("on"); n.textContent = `${i + 1}/${s.length}`; };
+  addEventListener("keydown", e => go({ArrowRight: 1, PageDown: 1, " ": 1, ArrowLeft: -1, PageUp: -1}[e.key] || 0));
+  addEventListener("click", e => go(e.clientX > innerWidth / 3 ? 1 : -1));
+  go(0);
+  fetch("exp.json").then(r => r.json()).then(j => {
+    const rows = j.rows.filter(l => l.startsWith("|") && !l.startsWith("|---")).map(l => l.split("|").slice(1, -1));
+    exptable.innerHTML = "<table>" + rows.map((r, k) => "<tr>" + r.map(c => k ? `<td>${c}</td>` : `<th>${c}</th>`).join("") + "</tr>").join("") + "</table>"
+      + j.rows.filter(l => l.startsWith("\n") || l.startsWith("校准")).map(l => `<p><b>${l}</b></p>`).join("");
+  }).catch(() => {});
+</script>
+</body>
+</html>

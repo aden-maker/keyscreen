@@ -1,0 +1,36 @@
+{
+ "历史真实按键": {
+  "n": 649,
+  "miss_rate": 0.0185,
+  "mean_error_px": 40.0,
+  "edge_rate": 0.4099,
+  "key_bias_px": 22.1,
+  "worst_keys": [
+   {
+    "key": "Space",
+    "bias_px": 74.9,
+    "n": 6
+   },
+   {
+    "key": "Enter",
+    "bias_px": 49.3,
+    "n": 5
+   },
+   {
+    "key": "Shift",
+    "bias_px": 48.9,
+    "n": 10
+   },
+   {
+    "key": "M",
+    "bias_px": 47.1,
+    "n": 6
+   },
+   {
+    "key": "Q",
+    "bias_px": 45.2,
+    "n": 7
+   }
+  ]
+ }
+}

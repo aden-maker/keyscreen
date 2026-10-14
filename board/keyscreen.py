@@ -1115,6 +1115,15 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
     async def stats(req):
         return ok(**store.stats(float(req.query.get("since", 0))))
 
+    @r.get("/api/touch/rows")
+    async def touch_rows(req):
+        """Raw touches in [since, until) for desktop/experiment.py."""
+        q = req.query
+        with store.lock:
+            rows = store.db.execute("select t, key, dx, dy, hit from touch where t>=? and t<? order by t",
+                                    (float(q.get("since", 0)), float(q.get("until", 1e12)))).fetchall()
+        return ok(rows=rows)
+
     @r.get("/api/touch/points")
     async def points(req):
         with store.lock:

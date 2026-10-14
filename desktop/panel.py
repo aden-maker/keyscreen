@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -154,10 +155,19 @@ def next_event() -> str:
 
 def info_loop(board: str, city: str, stop: threading.Event) -> None:
     """Info line every minute; once an hour Agnes turns weather + next event into one cute sentence for the pet."""
-    wd, w_at, told = {}, 0.0, 0.0
+    cache = Path("/tmp/keyscreen-demo/weather.json")
+    try:
+        wd = json.loads(cache.read_text(encoding="utf-8"))  # offline at the venue: show the last good forecast
+    except Exception:
+        wd = {}
+    w_at, told = 0.0, 0.0
     while not stop.is_set():
         if time.time() - w_at > (600 if wd else 60):
-            wd, w_at = weather(city) or wd, time.time()
+            new, w_at = weather(city), time.time()
+            if new:
+                wd = new
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                cache.write_text(json.dumps(wd, ensure_ascii=False), encoding="utf-8")
         ev = next_event()
         w = f"{wd['desc']} {wd['temp']}°C" if wd else ""
         line = f"下一项 {ev}" if ev else ""
@@ -203,6 +213,41 @@ def ask_agnes(prompt: str, timeout: int = 240) -> dict:
             **({} if out.returncode == 0 else {"error": f"agh 退出码 {out.returncode}"})}
 
 
+def offline_reply(board: str, prompt: str) -> str:
+    """Agnes unreachable (no network / quota): handle the four on-screen presets with local rules so the demo goes on."""
+    def call(method: str, path: str, body: dict | None = None) -> dict:
+        req = urllib.request.Request(board + path, data=json.dumps(body).encode() if body is not None else None,
+                                     headers={"Content-Type": "application/json"}, method=method)
+        return json.load(urllib.request.urlopen(req, timeout=5))
+    tag = "（离线模式）"
+    try:
+        if "校准" in prompt or "adjust_key" in prompt:
+            ks = [k for k in call("GET", "/api/touch/stats?since=0")["keys"] if k["count"] >= 10 and k["key"] != "Fn"]
+            ks = sorted(ks, key=lambda k: -math.hypot(k["avg_dx"], k["avg_dy"]))[:2]
+            clamp = lambda v: max(-15.0, min(15.0, v / 2))
+            for k in ks:
+                call("POST", "/api/keys/adjust", {"key": k["key"], "dx": clamp(k["avg_dx"]), "dy": clamp(k["avg_dy"])})
+            return tag + ("已按平均偏移的一半微调：" + "、".join(f"{k['key']}({clamp(k['avg_dx']):+.0f},{clamp(k['avg_dy']):+.0f})" for k in ks)
+                          if ks else "按键数据还不够，多打几个字再来～")
+        if "分析" in prompt or "总结" in prompt:
+            s = call("GET", "/api/touch/stats?since=0")
+            worst = max((k for k in s["keys"] if k["count"] >= 10), key=lambda k: math.hypot(k["avg_dx"], k["avg_dy"]), default=None)
+            return tag + f"共 {s['total']} 次按键，误触率 {s['miss_rate'] * 100:.1f}%" + (
+                f"，最容易按偏的是 {worst['key']}（平均偏 {worst['avg_dx']:+.0f},{worst['avg_dy']:+.0f} px），可以试试「校准按键」。" if worst else "。")
+        if "壁纸" in prompt or "配色" in prompt:
+            walls = call("GET", "/api/wallpapers")["wallpapers"]
+            if walls:
+                code = "代码" in prompt
+                p = call("GET", "/api/profile/default")["profile"]
+                cur = walls.index(p.get("wallpaper")) if p.get("wallpaper") in walls else -1
+                p.update(wallpaper=walls[(cur + 1) % len(walls)], theme="#38bdf8" if code else "#ff8ac6")
+                call("PUT", "/api/profile/default", p)
+                return tag + f"换成了「{p['wallpaper']}」，主题色{'天蓝' if code else '樱花粉'}～"
+    except Exception as e:
+        return tag + f"本地处理失败：{str(e)[:60]}"
+    return tag + "Agnes 暂时连不上（网络或额度问题），快捷指令「校准按键 / 分析打字 / 换壁纸」在离线时也能用哦～"
+
+
 def chat_bridge(board: str, stop: threading.Event) -> None:
     """Carries the board's on-screen chat to Agnes: poll the queue, run AGH, post the reply back."""
     def post(path: str, body: dict) -> None:
@@ -216,8 +261,11 @@ def chat_bridge(board: str, stop: threading.Event) -> None:
         if not it:
             continue
         print(f"[chat] #{it['id']} {it['prompt'][:60]}")
-        res = ask_agnes(it["prompt"])
+        res = ask_agnes(it["prompt"], timeout=90)
         text = res.get("text") or res.get("error") or "(无回复)"
+        if not res.get("ok") or not res.get("text"):
+            print(f"[chat] Agnes unavailable ({res.get('error')}), local fallback")
+            text, res = offline_reply(board, it["prompt"]), {"ok": True}
         try:
             post("/api/chat/reply", {"id": it["id"], "text": text, "ok": bool(res.get("ok"))})
         except Exception as e:
