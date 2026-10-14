@@ -254,8 +254,8 @@ def session_dir(fresh: bool = False) -> str:
     (turns complete empty, no model call), so rotate to a new directory every 30 minutes, or right away on failure."""
     d = Path("/tmp/keyscreen-agnes") / (f"r{time.time():.0f}" if fresh else f"s{int(time.time() // 1800)}")
     if not d.exists():
-        d.mkdir(parents=True)
-        (d / ".agh").symlink_to(ROOT / "work" / "keyscreen" / ".agh")
+        import shutil
+        shutil.copytree(str(ROOT / "work" / "keyscreen" / ".agh"), str(d / ".agh"))  # a symlink leaving the workspace is refused
     return str(d)
 
 
