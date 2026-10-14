@@ -1,0 +1,34 @@
+{
+ "lang": "ru",
+ "profile": {
+  "wallpaper": "dark_ocean.png",
+  "theme": "#1f2a3a",
+  "opacity": 100,
+  "legends": {},
+  "offsets": {
+   "S": [
+    -8.0,
+    -13.0
+   ],
+   "Shift": [
+    -14.0,
+    20.0
+   ],
+   "Q": [
+    0.0,
+    0.0
+   ]
+  },
+  "modules": [
+   "clock",
+   "app",
+   "wpm"
+  ],
+  "effect": "ripple",
+  "effect_color": "#ffb3dc",
+  "effect_ms": 450,
+  "effect_image": null,
+  "key_effects": {},
+  "lang": "ru"
+ }
+}

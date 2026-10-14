@@ -1,0 +1,158 @@
+[
+ {
+  "type": "正常",
+  "name": "AGH 多步任务：一句话配置俄语写作键盘",
+  "input": "我要开始写俄语论文了，帮我把键盘整套配好：先用 keyscreen-01 的 read/list 类工具查看当前状态和可…",
+  "expected": "AGH 完成规划→多次设备调用→回读验证；板端语言=ru，壁纸/主题色改变",
+  "actual": {
+   "reason": "completed",
+   "seconds": 34.4,
+   "text": "键盘已设置完成并确认生效：语言为俄语 ru，壁纸 dark_ocean.png 搭配沉稳主题色 #1f2a3a 已应用到 default，桌宠也完成 cheer。\n\nКонфигурация подтверждена: русский язык ru, обои dark_ocean.png и тема #1f2a3a в профиле default, пет уже помахал.",
+   "lang": "ru",
+   "wallpaper": "dark_ocean.png",
+   "theme": "#1f2a3a",
+   "export": [
+    "ok",
+    "ok"
+   ]
+  },
+  "pass": true,
+  "ms": 35632,
+  "at": "2026-10-14 19:56:13"
+ },
+ {
+  "type": "正常",
+  "name": "快捷按钮切换语言（板端本地通道）",
+  "input": "换语言键盘",
+  "expected": "瞬时回复布局介绍，语言切到下一种",
+  "actual": {
+   "reply": "已切到法语 AZERTY 键盘：A/Q、Z/W 互换，数字要按 Shift，é è ç à 直接在数字行。Bonjour",
+   "seconds": 0.01,
+   "lang": "fr"
+  },
+  "pass": true,
+  "ms": 126,
+  "at": "2026-10-14 19:56:14"
+ },
+ {
+  "type": "正常",
+  "name": "Agnes 只读分析打字数据",
+  "input": "分析打字（经 AGH 调用 get_touch_stats）",
+  "expected": "返回误触率与最易按偏的键，不修改设置",
+  "actual": {
+   "reply": "你的打字误触率为 0.8%，整体表现不错；D 键最容易按偏，平均偏离中心约 11.2px 向左、10px 向右下方。建议打字时稍微放慢一点或提前感知 D 键位置，可以减少偏移。",
+   "seconds": 14.2
+  },
+  "pass": true,
+  "ms": 14443,
+  "at": "2026-10-14 19:56:28"
+ },
+ {
+  "type": "正常",
+  "name": "整句拼音输入法",
+  "input": "nihaoshijie / zgrm / jintiantianqizenmeyang",
+  "expected": "首选：你好世界 / 中国人民 / 今天天气怎么样",
+  "actual": {
+   "nihaoshijie": "你好世界",
+   "zgrm": "中国人民",
+   "jintiantianqizenmeyang": "今天天气怎么样"
+  },
+  "pass": true,
+  "ms": 211,
+  "at": "2026-10-14 19:56:28"
+ },
+ {
+  "type": "边界",
+  "name": "未知语言代码",
+  "input": "POST /api/lang {\"lang\":\"xx\"}",
+  "expected": "HTTP 400，提示可选语言，状态不变",
+  "actual": {
+   "http": 400,
+   "error": "unknown language xx, use one of ['en', 'ru', 'fr', 'de'] or next"
+  },
+  "pass": true,
+  "ms": 19,
+  "at": "2026-10-14 19:56:28"
+ },
+ {
+  "type": "边界",
+  "name": "空消息",
+  "input": "POST /api/chat/send {\"prompt\":\"  \"}",
+  "expected": "HTTP 400 empty prompt，不进入队列",
+  "actual": {
+   "http": 400,
+   "error": "empty prompt"
+  },
+  "pass": true,
+  "ms": 9,
+  "at": "2026-10-14 19:56:28"
+ },
+ {
+  "type": "边界",
+  "name": "键位偏移超限",
+  "input": "adjust_key Q dx=999",
+  "expected": "偏移被钳制在 ±40 px 内（随后已还原）",
+  "actual": {
+   "http": 200,
+   "offset_after_999": [
+    40,
+    0.0
+   ]
+  },
+  "pass": true,
+  "ms": 154,
+  "at": "2026-10-14 19:56:29"
+ },
+ {
+  "type": "边界",
+  "name": "非拼音英文串",
+  "input": "keyscreen",
+  "expected": "首选原样英文，不强行转中文",
+  "actual": {
+   "first": "keyscreen"
+  },
+  "pass": true,
+  "ms": 212,
+  "at": "2026-10-14 19:56:29"
+ },
+ {
+  "type": "失败",
+  "name": "未知壁纸",
+  "input": "PUT /api/profile/default {\"wallpaper\":\"nope.png\"}",
+  "expected": "HTTP 400 unknown wallpaper，配置不变",
+  "actual": {
+   "http": 400,
+   "error": "unknown wallpaper nope.png"
+  },
+  "pass": true,
+  "ms": 206,
+  "at": "2026-10-14 19:56:29"
+ },
+ {
+  "type": "失败",
+  "name": "未知按键",
+  "input": "POST /api/keys/adjust {\"key\":\"NoSuchKey\"}",
+  "expected": "HTTP 400，拒绝修改",
+  "actual": {
+   "http": 400,
+   "error": "unknown key"
+  },
+  "pass": true,
+  "ms": 149,
+  "at": "2026-10-14 19:56:29"
+ },
+ {
+  "type": "失败",
+  "name": "模型不可用 → 本地兜底",
+  "input": "AGH --model no-such-model",
+  "expected": "AGH 非零退出并给出原因；电脑端改用本地规则回复（离线模式）",
+  "actual": {
+   "agh_exit": 2,
+   "agh_error": [],
+   "fallback_reply": "（离线模式）共 1434 次按键，误触率 0.8%，最容易按偏的是 Shift（平均偏 -28,+40 px），可以试试「校准按键」。"
+  },
+  "pass": true,
+  "ms": 752,
+  "at": "2026-10-14 19:56:30"
+ }
+]

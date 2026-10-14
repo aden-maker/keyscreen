@@ -1,0 +1,15 @@
+{
+ "v": "agnes-cli-result/v1",
+ "sessionId": "agnes:local:local-dev:cli:workspace:3dcf63e506d8dc06",
+ "reason": "completed",
+ "exitCode": 0,
+ "lastSeq": 115,
+ "credits": {
+  "used": 0,
+  "source": "estimated"
+ },
+ "text": "键盘已设置完成并确认生效：语言为俄语 ru，壁纸 dark_ocean.png 搭配沉稳主题色 #1f2a3a 已应用到 default，桌宠也完成 cheer。\n\nКонфигурация подтверждена: русский язык ru, обои dark_ocean.png и тема #1f2a3a в профиле default, пет уже помахал.",
+ "seconds": 34.4,
+ "export_jsonl": "ok",
+ "export_html": "ok"
+}
