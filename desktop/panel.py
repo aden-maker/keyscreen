@@ -249,20 +249,38 @@ ROOT = Path(__file__).resolve().parents[3]  # repo root: scripts/agh.sh, work/ke
 AGH = ROOT / "scripts" / "agh.sh"
 
 
+def session_dir(fresh: bool = False) -> str:
+    """AGH keys its print-mode session on --cwd. One workspace-wide session grows without bound and once wedged
+    (turns complete empty, no model call), so rotate to a new directory every 30 minutes, or right away on failure."""
+    d = Path("/tmp/keyscreen-agnes") / (f"r{time.time():.0f}" if fresh else f"s{int(time.time() // 1800)}")
+    if not d.exists():
+        d.mkdir(parents=True)
+        (d / ".agh").symlink_to(ROOT / "work" / "keyscreen" / ".agh")
+    return str(d)
+
+
 def ask_agnes(prompt: str, timeout: int = 240) -> dict:
     """Run one Agnes turn through AGH (print mode). The model acts on the keyboard via the MHS device."""
+    r = _ask_once(prompt, timeout, session_dir())
+    if r.get("ok") and not r.get("steps") and not re.sub(r"(?m)^agnes: .*$", "", r.get("text", "")).strip():
+        print("[agnes] empty turn, retrying in a fresh session")
+        r = _ask_once(prompt, timeout, session_dir(fresh=True))
+    return r
+
+
+def _ask_once(prompt: str, timeout: int, cwd: str) -> dict:
     env = {**os.environ, "HOME": os.environ.get("HOME") or str(Path.home()), "AGNES_HUB_ORIGIN": os.environ.get("AGNES_HUB_ORIGIN", "http://127.0.0.1:4180")}
     for k in ("http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
         env.pop(k, None)
     t0 = time.time()
     try:
-        out = subprocess.run(["bash", str(AGH), "-p", prompt, "--cwd", str(ROOT / "work" / "keyscreen"), "--mode", "text"],
-                             capture_output=True, text=True, timeout=timeout, env=env, cwd=str(ROOT / "work" / "keyscreen"))
+        out = subprocess.run(["bash", str(AGH), "-p", prompt, "--cwd", cwd, "--mode", "text"],
+                             capture_output=True, text=True, timeout=timeout, env=env, cwd=cwd)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "Agnes 超时", "steps": [], "text": ""}
     steps, text = [], []
     for line in (out.stdout + out.stderr).splitlines():
-        if re.match(r"^\s+at ", line) or "sk-" in line:
+        if re.match(r"^\s+at ", line) or "sk-" in line or line.startswith("agnes: no turn/end row"):
             continue
         if line.startswith("- tool "):
             steps.append(line[7:])
