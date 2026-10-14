@@ -47,7 +47,8 @@ if($n -ne $last){[Console]::Out.WriteLine($n);[Console]::Out.Flush();$last=$n};S
 
 
 LANG_KLID = {"ru": "00000419", "fr": "0000040C", "de": "00000407"}  # Windows layouts shipped with every install
-KL_PS = r"""Add-Type @"
+KL_PS = r"""$ProgressPreference="SilentlyContinue"
+Add-Type @"
 using System;using System.Runtime.InteropServices;
 public class KL{[DllImport("user32.dll")]public static extern IntPtr LoadKeyboardLayout(string id,uint f);[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll")]public static extern IntPtr GetKeyboardLayout(int t);[DllImport("user32.dll")]public static extern int GetWindowThreadProcessId(IntPtr h,IntPtr p);
@@ -67,7 +68,7 @@ def host_layout(lang: str, home: list) -> None:
     enc = base64.b64encode(KL_PS.replace("MODE", "load" if lang in LANG_KLID else "hkl").replace("VAL", str(target)).encode("utf-16-le")).decode()
     r = subprocess.run([ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc], capture_output=True, timeout=20)
     out = r.stdout.decode(errors="replace").split()
-    if r.returncode or r.stderr:
+    if r.returncode:
         print(f"[lang] host layout switch failed: {r.stderr.decode('gbk', errors='replace')[:300]}")
     if out and not home and lang in LANG_KLID:
         home.append(out[0])
