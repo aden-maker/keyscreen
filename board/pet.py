@@ -13,12 +13,11 @@ from pygame import gfxdraw
 
 HAIR, HAIR2, SKIN, DRESS, DRESS2 = (190, 156, 255), (160, 124, 238), (255, 232, 220), (255, 138, 190), (255, 205, 228)
 SOCK, SHOE, EYE, EYE2, MOUTH, CHEEK, RIB = (255, 255, 255), (232, 98, 150), (52, 58, 120), (96, 140, 235), (200, 80, 110), (255, 186, 200), (255, 120, 170)
-WHALE, WHALE2, BELLY, SPRAY = (77, 107, 254), (58, 84, 222), (214, 226, 255), (150, 210, 255)
-KEY = (30, 40, 96)  # transparent key; AA edges blend into it, giving a soft dark outline
+KEY = (70, 52, 92)  # transparent key; AA edges blend into it, giving a soft dark outline
 SW, SH, CX, FY = 320, 300, 160, 292  # local surface, feet at (CX, FY)
 HIP, SHO, HEAD, HR = 62, 108, 162, 54
-TAP_LINES = ["诶嘿~", "戳我干嘛啦 (>_<)", "Agnes 在这里哦~", "今天也要加油！", "要好好打字哦～", "嗯？有事找我吗？", "按住我可以拖着走哦"]
-GRAB_LINES = ["哇！放我下来～", "飞起来啦！", "要去哪里呀？", "呜哇——"]
+TAP_LINES = ["喵～", "戳我干嘛喵 (>_<)", "Agnes 在这里喵~", "今天也要加油喵！", "要好好打字哦～喵", "嗯？要摸摸头吗？", "按住我可以拖着走喵"]
+GRAB_LINES = ["喵呜！放我下来～", "飞起来了喵！", "要去哪里呀喵？", "喵——"]
 
 
 def circ(s, c, p, r):
@@ -314,75 +313,132 @@ class Pet:
 
     # ---------- drawing ----------
     def _render(self) -> None:
-        """Chubby blue whale: body squash/bob from the rig, fins follow the arms, tail flaps with the legs."""
         s, p = self.surf, self.pose()
         s.fill(KEY)
-        t, f, sy = self.t, p["face"], p["sy"]
-        bx = CX + 8 + p["lean"] * 0.6
-        by = FY - 64 - p["bob"] + 22 * p["sit"] + p["nod"]
-        rx, ry = 84 * (2 - sy) ** 0.5, 62 * sy
-        tilt = math.radians(p["tilt"] * 0.8)
-        rot = lambda dx, dy: (bx + dx * math.cos(tilt) - dy * math.sin(tilt), by + dx * math.sin(tilt) + dy * math.cos(tilt))
-        flap = (p["legL"] - p["legR"]) * 0.25 + math.sin(t * 3) * 6
-        # tail: tapered stalk curling up behind, two round flukes
-        stalk = [rot(-rx * 0.7, -8), rot(-rx - 18, -26 - flap * 0.4), rot(-rx - 30, -44 - flap * 0.8), rot(-rx - 24, -40 - flap * 0.8),
-                 rot(-rx - 6, -14), rot(-rx * 0.7, 22)]
-        poly(s, WHALE2, stalk)
-        tx, ty = rot(-rx - 30, -46 - flap * 0.8)
+        lean, sy, bob, sit = math.radians(p["lean"]), p["sy"], p["bob"], p["sit"]
+        drop = 40 * sit
+
+        def pt(dx, h):
+            h2 = h - drop if h > 20 else h
+            shift = (h2 - (HIP - drop)) * math.tan(lean) if h2 > HIP - drop else 0
+            return (CX + dx + shift, FY - h2 * sy - bob)
+
+        def leg(hip, a, k, col, shoe):
+            knee = limb_end(hip, a, 24)
+            foot = limb_end(knee, a - k, 23)
+            cap(s, col, hip, knee, 11)
+            cap(s, col, knee, foot, 10)
+            ell(s, shoe, foot[0] + 4, foot[1] + 2, 10, 6)
+
+        def arm(sh, a, e, col, sleeve):
+            el = limb_end(sh, a, 19)
+            hand = limb_end(el, a + e, 17)
+            cap(s, col, sh, el, 9)
+            cap(s, col, el, hand, 8)
+            circ(s, col, hand, 6)
+            circ(s, sleeve, sh, 9)
+
+        hipL, hipR = pt(-8, HIP), pt(8, HIP)
+        shoL, shoR = pt(-17, SHO - 6), pt(17, SHO - 6)
+        hx, hy = pt(0, HEAD)
+        hx += p["tilt"] * 0.5
+        hy += p["nod"]
+        darker = lambda c: tuple(max(0, int(v * 0.86)) for v in c)
+        # twin tails: droplet-shaped, hanging and curling inward, swaying behind everything
+        for side in (-1, 1):
+            x, y = hx + side * 50, hy - 24
+            L, R = [], []
+            for i in range(10):
+                u = i / 9
+                ang = math.radians(side * (8 + 16 * u - 40 * u ** 3) + self.tail * (0.4 + u) + math.sin(self.t * 3 + side + u * 2) * 7 * u)
+                w = 4 + 14 * math.sin(math.pi * (0.15 + 0.85 * u))
+                nx, ny = math.cos(ang), -math.sin(ang)
+                L.append((x + nx * w, y + ny * w))
+                R.append((x - nx * w, y - ny * w))
+                x, y = x + math.sin(ang) * 11, y + math.cos(ang) * 11
+            poly(s, HAIR2, L + R[::-1])
+            circ(s, RIB, (hx + side * 50, hy - 24), 7)
+        circ(s, HAIR2, (hx, hy - 6), HR + 5)
+        ell(s, HAIR2, hx, hy + 16, HR + 2, 36)
+        # cat tail from behind the hips: S-curve that sways, curls more when happy
+        cx0, cy0 = pt(-14, HIP + 8)
+        curl = 1.6 if p["face"] == "happy" else 1.0
+        prev = (cx0, cy0)
+        for i in range(1, 13):
+            u = i / 12
+            ang = math.radians(-60 - 70 * u * curl + math.sin(self.t * 3 - u * 3) * 22 * u + self.tail * 0.5)
+            nxt = (prev[0] + math.cos(ang) * 8 * -1, prev[1] + math.sin(ang) * 8)
+            cap(s, HAIR2, prev, nxt, 9 if i < 11 else 8)
+            prev = nxt
+        circ(s, (255, 255, 255), prev, 7)
+        # legs and far arm sit under the dress
+        leg(hipL, p["legL"], p["kneeL"], darker(SOCK), darker(SHOE))
+        leg(hipR, p["legR"], p["kneeR"], SOCK, SHOE)
+        arm(shoL, p["armL"], p["elbL"], darker(SKIN), darker(DRESS))
+        hem = 36 + p["hem"]
+        hl, hr = (hipL[0] - hem + 8, hipL[1] + 12), (hipR[0] + hem - 8, hipR[1] + 12)
+        poly(s, DRESS, [pt(-15, SHO), pt(15, SHO), hr, hl])
+        for i in range(8):  # lace trim
+            u = i / 7
+            circ(s, DRESS2, (hl[0] + (hr[0] - hl[0]) * u, hl[1] + (hr[1] - hl[1]) * u), 6)
+        poly(s, SOCK, [pt(-15, SHO + 1), pt(15, SHO + 1), pt(0, SHO - 16)])
+        bx, by = pt(0, SHO - 10)
         for d in (-1, 1):
-            a = math.radians(-90 + d * 55 + flap)
-            ell(s, WHALE2, tx + math.cos(a) * 16, ty + math.sin(a) * 16, 17, 10)
-        # far fin, body, belly
-        def fin(ang, col, side):
-            a = math.radians(ang * 0.5 - 20)
-            x0, y0 = rot(side * 18, ry * 0.45)
-            pts = [(x0 + math.cos(a + math.pi / 2 + k * math.pi / 6) * (30 if k in (2, 3, 4) else 12) * (1 if k in (2, 3, 4) else 0.5),
-                    y0 + math.sin(a + math.pi / 2 + k * math.pi / 6) * (30 if k in (2, 3, 4) else 12) * (1 if k in (2, 3, 4) else 0.5)) for k in range(7)]
-            poly(s, col, [(x0 - 9, y0)] + pts + [(x0 + 9, y0)])
-        fin(p["armL"], WHALE2, -1)
-        ell(s, WHALE, bx, by, rx, ry)
-        ell(s, BELLY, bx + rx * 0.18, by + ry * 0.42, rx * 0.72, ry * 0.5)
-        ell(s, WHALE, bx + rx * 0.1, by + ry * 0.14, rx * 0.82, ry * 0.42)
-        ell(s, (150, 178, 255), bx - rx * 0.25, by - ry * 0.62, rx * 0.36, ry * 0.12)  # sheen
-        # face on the front half
-        lx = p["look"] * 4
-        ex, ey = bx + rx * 0.42 + lx, by - ry * 0.12
-        if f in ("blink", "sleep"):
-            cap(s, EYE, (ex - 10, ey), (ex, ey + 5), 4)
-            cap(s, EYE, (ex, ey + 5), (ex + 10, ey), 4)
-        elif f == "happy":
-            cap(s, EYE, (ex - 10, ey + 4), (ex, ey - 5), 4)
-            cap(s, EYE, (ex, ey - 5), (ex + 10, ey + 4), 4)
-        elif f == "dizzy":
-            cap(s, EYE, (ex - 8, ey - 7), (ex + 8, ey + 7), 4)
-            cap(s, EYE, (ex - 8, ey + 7), (ex + 8, ey - 7), 4)
-        else:
-            r = 9 if f == "focus" else 15 if f == "surprise" else 13
-            ell(s, EYE, ex, ey, 11, r)
-            circ(s, (255, 255, 255), (ex - 3, ey - r * 0.45), 4)
-            circ(s, (255, 255, 255), (ex + 4, ey + r * 0.35), 2)
-        ell(s, CHEEK, ex + 6, ey + 20, 10, 5)
-        mx, my = bx + rx * 0.72 + lx, by + ry * 0.1
+            poly(s, RIB, [(bx, by), (bx + d * 10, by - 6), (bx + d * 10, by + 6)])
+        circ(s, (255, 170, 205), (bx, by), 3)
+        # head
+        ell(s, SKIN, hx, hy + 2, HR - 1, HR - 4)
+        f, lx = p["face"], 5 + p["look"] * 4
+        for side, ex in ((-1, -20), (1, 20)):
+            cx, cy = hx + ex + lx, hy + 12
+            if f in ("blink", "sleep"):
+                cap(s, EYE, (cx - 10, cy + 2), (cx, cy + 6), 4)
+                cap(s, EYE, (cx, cy + 6), (cx + 10, cy + 2), 4)
+            elif f == "happy":
+                cap(s, EYE, (cx - 10, cy + 4), (cx, cy - 4), 4)
+                cap(s, EYE, (cx, cy - 4), (cx + 10, cy + 4), 4)
+            elif f == "dizzy":
+                cap(s, EYE, (cx - 8, cy - 6), (cx + 8, cy + 8), 4)
+                cap(s, EYE, (cx - 8, cy + 8), (cx + 8, cy - 6), 4)
+            else:
+                top = cy - 3 if f == "focus" else cy - 13
+                ry = 10 if f == "focus" else 12 if f == "surprise" else 15
+                ell(s, EYE, cx, cy + (4 if f == "focus" else 0), 11, ry)
+                ell(s, EYE2, cx, cy + 5, 8, 8 if f != "surprise" else 6)
+                circ(s, (255, 255, 255), (cx - 4, cy - 5 + (5 if f == "focus" else 0)), 4)
+                circ(s, (255, 255, 255), (cx + 4, cy + 8), 2)
+                cap(s, EYE, (cx - 12, top), (cx + 12, top), 5)
+                cap(s, EYE, (cx + side * 12, top), (cx + side * 17, top - 5), 3)
+        ell(s, CHEEK, hx - 33 + lx, hy + 28, 9, 5)
+        ell(s, CHEEK, hx + 33 + lx, hy + 28, 9, 5)
+        mx, my = hx + lx, hy + 32
         if f in ("surprise", "dizzy"):
-            ell(s, MOUTH, mx, my + 3, 5, 6)
+            ell(s, MOUTH, mx, my + 2, 5, 6)
         elif f == "happy":
-            poly(s, MOUTH, [(mx - 10, my), (mx + 6, my - 2), (mx + 2, my + 7), (mx - 6, my + 7)])
+            poly(s, MOUTH, [(mx - 7, my - 2), (mx + 7, my - 2), (mx + 4, my + 5), (mx - 4, my + 5)])
+            ell(s, (255, 150, 170), mx, my + 3, 3, 2)
         else:
-            cap(s, MOUTH, (mx - 10, my + 1), (mx - 3, my + 5), 3)
-            cap(s, MOUTH, (mx - 3, my + 5), (mx + 4, my + 1), 3)
-        fin(p["armR"], WHALE2, 1)
-        # spout when happy / jumping
-        if f in ("happy", "surprise") or self.mode in ("cheer", "air", "dance"):
-            sx, sy0 = rot(rx * 0.15, -ry - 4)
-            h = 26 + 8 * math.sin(t * 9)
-            cap(s, SPRAY, (sx, sy0), (sx, sy0 - h), 5)
-            for k in (-1, 0, 1):
-                circ(s, SPRAY, (sx + k * 14, sy0 - h - (6 if k else 12) + 3 * math.sin(t * 9 + k)), 6 if k else 7)
-        if self.mode == "sleep":
-            zx, zy = rot(rx * 0.3, -ry - 20 - (t * 12) % 30)
-            cap(s, EYE, (zx, zy), (zx + 10, zy), 2)
-            cap(s, EYE, (zx + 10, zy), (zx, zy + 10), 2)
-            cap(s, EYE, (zx, zy + 10), (zx + 10, zy + 10), 2)
+            cap(s, MOUTH, (mx - 5, my), (mx, my + 2), 3)
+            cap(s, MOUTH, (mx, my + 2), (mx + 5, my), 3)
+        # cat ears, twitching now and then; bangs cover their base
+        tw = 6 * max(0, math.sin(self.t * 5)) ** 8
+        for d in (-1, 1):
+            base1, base2 = (hx + d * 16, hy - 50), (hx + d * 52, hy - 30)
+            tip = (hx + d * (46 + tw * (d > 0)), hy - 92 + tw * (d > 0))
+            poly(s, HAIR, [base1, tip, base2])
+            poly(s, (255, 182, 206), [(hx + d * 24, hy - 50), (tip[0] - d * 4, tip[1] + 14), (hx + d * 46, hy - 36)])
+        # bangs: dome + pointed locks
+        dome = [(hx + math.cos(math.radians(a)) * (HR + 4), hy - 20 - math.sin(math.radians(a)) * (HR - 2)) for a in range(0, 181, 15)]
+        locks = [(-52, 22), (-42, -6), (-30, 6), (-17, -12), (-3, 3), (11, -12), (25, 5), (38, -6), (52, 22)]
+        poly(s, HAIR, dome + [(hx + dx, hy + dy) for dx, dy in locks])
+        ell(s, (224, 208, 255), hx - 16, hy - 44, 16, 5)
+        ah = math.sin(self.t * 4) * 6
+        cap(s, HAIR, (hx - 2, hy - 72), (hx + 10 + ah, hy - 90), 6)
+        cap(s, HAIR, (hx + 10 + ah, hy - 90), (hx + 24 + ah, hy - 84), 5)
+        for d in (-1, 1):  # bow
+            poly(s, RIB, [(hx - 40, hy - 50), (hx - 40 + d * 22, hy - 64), (hx - 40 + d * 20, hy - 38)])
+        circ(s, (255, 170, 205), (hx - 40, hy - 50), 6)
+        arm(shoR, p["armR"], p["elbR"], SKIN, DRESS)
 
     def draw(self, canvas) -> list:
         pg = self.pg
