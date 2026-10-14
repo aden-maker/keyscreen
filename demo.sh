@@ -32,7 +32,7 @@ ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
 curl -s -m 2 http://127.0.0.1:4180/ >/dev/null || (cd "$ROOT/agnes-harness" && "$ROOT/scripts/agh.sh" package status >/dev/null 2>&1)
 pgrep -f "agnes.mjs serve" >/dev/null || { (cd "$HERE" && nohup setsid "$ROOT/scripts/agh.sh" serve --home "$ROOT/.agh" --profile local-dev --cwd "$HERE" --port 43117 >"$LOG/agh.log" 2>&1 </dev/null &) ; }
 # panel.py also supervises the keyscreen-01 MHS bridge, the on-screen chat, foreground-app hints and the weather line.
-pgrep -f "desktop/panel.py" >/dev/null || { nohup setsid python3 "$HERE/desktop/panel.py" --board "$BOARD" --hub "$HUB" >"$LOG/panel.log" 2>&1 </dev/null & }
+pgrep -f "desktop/panel.py" >/dev/null || { nohup setsid python3 -u "$HERE/desktop/panel.py" --board "$BOARD" --hub "$HUB" >"$LOG/panel.log" 2>&1 </dev/null & }
 sleep 4
 curl -s -m 3 http://127.0.0.1:4180/ >/dev/null && echo "AgnesHub      http://127.0.0.1:4180/   (设备 keyscreen-01)" || echo "AgnesHub 未监听 4180：先 scripts/agh.sh package status 看 @agnes/mhs 是否 enabled"
 echo "演示软件      http://127.0.0.1:43125/  <- 打开这个"

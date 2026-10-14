@@ -262,8 +262,9 @@ def session_dir(fresh: bool = False) -> str:
 def ask_agnes(prompt: str, timeout: int = 240) -> dict:
     """Run one Agnes turn through AGH (print mode). The model acts on the keyboard via the MHS device."""
     r = _ask_once(prompt, timeout, session_dir())
-    if r.get("ok") and not r.get("steps") and not re.sub(r"(?m)^agnes: .*$", "", r.get("text", "")).strip():
-        print("[agnes] empty turn, retrying in a fresh session")
+    empty = r.get("ok") and not r.get("steps") and not re.sub(r"(?m)^agnes: .*$", "", r.get("text", "")).strip()
+    if empty or (not r.get("ok") and r.get("error") != "Agnes 超时"):
+        print(f"[agnes] {'empty turn' if empty else r.get('error')}, retrying in a fresh session")
         r = _ask_once(prompt, timeout, session_dir(fresh=True))
     return r
 
@@ -346,7 +347,7 @@ def chat_bridge(board: str, stop: threading.Event) -> None:
         res = ask_agnes(it["prompt"], timeout=90)
         text = res.get("text") or res.get("error") or "(无回复)"
         if not res.get("ok") or not res.get("text") or re.match(r"^\s*agnes: ", res.get("text", "")):
-            print(f"[chat] Agnes unavailable ({res.get('error')}), local fallback")
+            print(f"[chat] Agnes unavailable ({res.get('error')}: {res.get('text', '')[-300:]}), local fallback")
             text, res = offline_reply(board, it["prompt"]), {"ok": True}
         try:
             post("/api/chat/reply", {"id": it["id"], "text": text, "ok": bool(res.get("ok"))})
