@@ -13,6 +13,7 @@ import threading
 import time
 from pathlib import Path
 
+import weather
 from ime import Pinyin
 from pet import Pet
 
@@ -60,7 +61,7 @@ class Chat:
         self.text, self.focused, self.shift, self.caps = "", False, False, False
         self.dirty, self.next_id, self.typed_at = True, 1, 0.0
         self.ime, self.zh, self.py, self.page = None, True, "", 0  # Chinese pinyin input by default
-        self._cands = ("", [])
+        self._cands = ("", [], "")
         self.key_t = 0.0
 
     def send(self, prompt: str) -> dict:
@@ -105,14 +106,21 @@ class Chat:
     @property
     def cands(self) -> list:
         if self._cands[0] != self.py:
-            self._cands = (self.py, self.ime.cands(self.py) if (self.ime and self.py) else [])
+            self._cands = (self.py, *(self.ime.query(self.py) if (self.ime and self.py) else ([], self.py)))
         return self._cands[1]
+
+    @property
+    def seg(self) -> str:
+        self.cands
+        return self._cands[2]
 
     def pick(self, i: int) -> None:
         c = self.cands
         if 0 <= i < len(c):
             w, n = c[i]
-            self.text, self.py, self.page = (self.text + w)[:200], self.py[n:], 0
+            if self.ime:
+                self.ime.learn(self.py[:n], w)
+            self.text, self.py, self.page = (self.text + w)[:200], self.py[n:].lstrip("'"), 0
         self.dirty = True
 
     def key(self, label: str) -> None:
@@ -138,8 +146,8 @@ class Chat:
             if label == "Enter":
                 self.text, self.py = self.text + self.py, ""
                 return
-            if len(label) == 1 and label.isalpha():
-                self.py = (self.py + label.lower())[:30]
+            if (len(label) == 1 and label.isalpha()) or (label == "'" and not self.py.endswith("'")):
+                self.py = (self.py + label.lower())[:40]
                 self.page = 0
                 return
             if len(label) != 1:
@@ -189,6 +197,9 @@ class Widgets:
         self.zones = {"top": pg.Rect(0, 0, bw, bh - 122), "row": pg.Rect(0, bh - 122, bw, 50), "in": pg.Rect(0, bh - 72, bw, 72)}
         self.sigs: dict = {}
         self._memo: dict = {}
+        self.wfonts = {"big": mkfont(84), "mid": mkfont(30), "small": self.tiny}
+        self.wdata: dict = {}
+        self.card, self.card_rect, self.card_dirty = None, pg.Rect(28, bar_h + 14, 470, 266), True  # static layer
         self.wake = None  # threading.Event set by the Renderer: a chat key wakes the frame loop early
         self.held = None  # [label, next repeat time] for typematic Bksp/Space
         self.perf = collections.deque(maxlen=100)  # (composite ms, key -> composited ms)
@@ -212,7 +223,10 @@ class Widgets:
             self.pet.set_mode("wave", 1.5)
 
     def set_info(self, text: str) -> None:
-        self.info, self.info_surf = text[:120], None
+        self.info, self.card_dirty = text[:60], True
+
+    def set_weather(self, data: dict) -> None:
+        self.wdata, self.card_dirty = dict(data), True
 
     # -- input --
     def down(self, slot, x: float, y: float) -> None:
@@ -354,7 +368,7 @@ class Widgets:
         a = tuple(accent)[:3]
         self.chips, x, cy = [], 34, z.h // 2
         if c.py:  # composing: PC-style candidate strip
-            t = f.render(c.py, True, (*a,))
+            t = f.render(c.seg or c.py, True, (*a,))
             s.blit(t, (x, cy - t.get_height() // 2))
             x += t.get_width() + 16
             cands = c.cands
@@ -362,6 +376,8 @@ class Widgets:
                 t = f.render(w, True, (60, 30, 70) if i == 0 else (255, 255, 255))
                 n = tf.render(str(i + 1), True, (60, 30, 70) if i == 0 else (200, 190, 225))
                 r = pg.Rect(x, cy - 20, n.get_width() + t.get_width() + 30, 40)
+                if i and r.right > z.w - 170:
+                    break
                 if i == 0:
                     pg.draw.rect(s, (*a, 240), r, border_radius=20)
                 s.blit(n, (r.x + 12, cy - n.get_height() // 2 + 1))
@@ -459,6 +475,10 @@ class Widgets:
         elif self.open and self.anim >= 1.0 and not self.layer_on:
             self.cache.set_alpha(255)  # set_alpha(None) disables per-pixel blending in pygame 2 -> opaque box
             self.layer_on, dirty = True, self.box
+        if self.card_dirty:
+            self.card_dirty = False
+            self.card = weather.card(pg, self.wfonts, self.wdata, self.info) if (self.wdata or self.info) else None
+            dirty = self.card_rect if dirty is None else dirty.union(self.card_rect)
         return dirty
 
     def draw(self, canvas, accent, miss_rate: float, wpm: float) -> list:
@@ -469,10 +489,6 @@ class Widgets:
             self.cache.set_alpha(int(255 * e))
             rects.append(canvas.blit(self.cache, (int(self.box.x + (1 - e) * 260), self.box.y)))
             self.cache.set_alpha(255)
-        if self.info:
-            if self.info_surf is None:
-                self.info_surf = shadow_text(pg, self.tiny, self.info, (255, 255, 255))
-            rects.append(canvas.blit(self.info_surf, (30, 100)))
         rects += self.pet.draw(canvas)
         if self.chat.busy:
             rects += self.pet.bubble(canvas, self.tiny, "", True)

@@ -646,6 +646,7 @@ class Renderer:
         for k in self.store.keys:
             self.legends.blit(self.keycap(k, (240, 244, 250), shadow), (k["rect"][0], k["rect"][1] - KB_Y))
             self.pressed_caps[k["label"]] = self.keycap(k, self.accent, shadow)
+        self.legends.set_alpha(255, pg.RLEACCEL)  # mostly transparent: RLE makes the per-video-frame full blit cheap
         self.bar_text = None
         self.draw_bar()
 
@@ -683,6 +684,10 @@ class Renderer:
             x = r.clip(wg.box)
             if x:
                 c.blit(wg.cache, x.topleft, x.move(-wg.box.x, -wg.box.y))
+        if wg is not None and wg.card is not None:
+            x = r.clip(wg.card_rect)
+            if x:
+                c.blit(wg.card, x.topleft, x.move(-wg.card_rect.x, -wg.card_rect.y))
 
     def draw_fx(self, e, now: float):
         pg = self.pg
@@ -732,9 +737,7 @@ class Renderer:
             self.rebuild()
             full = True
         a, wg = self.anim, self.widgets
-        typing = wg is not None and wg.open and time.time() - wg.chat.typed_at < 0.6
-        if a and now >= a["next"] and not (typing and (wg.chat.key_t or now - a.get("t_full", 0) < 0.35)):
-            a["t_full"] = now  # a video frame is a ~50 ms full repaint; while typing in the chat box, keys go first
+        if a and now >= a["next"] and not (wg is not None and wg.open and wg.chat.key_t):  # a pending chat key goes first, video resumes next frame
             a["i"] = (a["i"] + 1) % len(a["frames"])
             a["next"] = (a["next"] if now - a["next"] < 0.5 else now) + 1 / a["fps"]
             pg.transform.scale(a["frames"][a["i"]], (W, H), self.bg)
@@ -1049,6 +1052,16 @@ def make_app(store: Store, engine: Engine, renderer: Renderer):
         if renderer.widgets is None:
             return bad("widgets disabled", 503)
         renderer.widgets.set_info(str((await req.json()).get("text", "")))
+        return ok()
+
+    @r.post("/api/widgets/weather")
+    async def widgets_weather(req):
+        if renderer.widgets is None:
+            return bad("widgets disabled", 503)
+        b = await req.json()
+        if not isinstance(b, dict):
+            return bad("expected an object")
+        renderer.widgets.set_weather(b)
         return ok()
 
     @r.get("/api/debug/profile")

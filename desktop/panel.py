@@ -109,12 +109,26 @@ def supervise_device(board: str, hub: str, stop: threading.Event) -> None:
             stop.wait(3)
 
 
-def weather(city: str) -> str:
+def weather(city: str) -> dict:
+    """wttr.in j1 -> the board's weather card: current, today's high/low, next five 3-hour slots."""
     try:
-        u = f"https://wttr.in/{urllib.parse.quote(city)}?format=%C+%t&lang=zh-cn&m"
-        return urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "curl/8"}), timeout=8).read().decode().strip()
+        u = f"https://wttr.in/{urllib.parse.quote(city)}?format=j1&lang=zh-cn"
+        j = json.loads(urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "curl/8"}), timeout=15).read())
     except Exception:
-        return ""
+        return {}
+    cur = j["current_condition"][0]
+    zh = lambda e: next((v[0]["value"] for k, v in e.items() if k.startswith("lang_zh") and v), e["weatherDesc"][0]["value"])
+    days = j.get("weather") or []
+    now_h = time.localtime().tm_hour
+    hourly = [{"label": "现在", "code": int(cur["weatherCode"]), "temp": int(cur["temp_C"]), "hour": now_h}]
+    for di, day in enumerate(days[:2]):
+        for h in day.get("hourly", []):
+            hr = int(h["time"]) // 100
+            if (di == 0 and hr > now_h) or di == 1:
+                hourly.append({"label": f"{hr}时", "code": int(h["weatherCode"]), "temp": int(h["tempC"]), "hour": hr})
+    return {"city": city, "temp": int(cur["temp_C"]), "desc": zh(cur).strip(), "code": int(cur["weatherCode"]),
+            "hi": int(days[0]["maxtempC"]) if days else None, "lo": int(days[0]["mintempC"]) if days else None,
+            "hourly": hourly[:6]}
 
 
 def next_event() -> str:
@@ -140,13 +154,16 @@ def next_event() -> str:
 
 def info_loop(board: str, city: str, stop: threading.Event) -> None:
     """Info line every minute; once an hour Agnes turns weather + next event into one cute sentence for the pet."""
-    w, w_at, told = "", 0.0, 0.0
+    wd, w_at, told = {}, 0.0, 0.0
     while not stop.is_set():
-        if time.time() - w_at > 1800 or not w:
-            w, w_at = weather(city) or w, time.time()
+        if time.time() - w_at > (600 if wd else 60):
+            wd, w_at = weather(city) or wd, time.time()
         ev = next_event()
-        line = " · ".join(x for x in (f"{city} {w}" if w else "", f"下一项 {ev}" if ev else "") if x)
+        w = f"{wd['desc']} {wd['temp']}°C" if wd else ""
+        line = f"下一项 {ev}" if ev else ""
         try:
+            if wd:  # every loop, so a rebooted board gets its card back within a minute
+                board_post(board, "/api/widgets/weather", wd)
             board_post(board, "/api/widgets/info", {"text": line})
             if line and time.time() - told > 3600:
                 told = time.time()

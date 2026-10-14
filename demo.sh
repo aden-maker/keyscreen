@@ -10,7 +10,18 @@ unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
 LOG=/tmp/keyscreen-demo; mkdir -p "$LOG"
 
 if [[ "${1:-}" == "stop" ]]; then
-  pkill -f "board/mhs_device.py" ; pkill -f "desktop/panel.py" ; pkill -f "agnes.mjs serve"; echo stopped; exit 0
+  pkill -f "demo.sh watch"; pkill -f "board/mhs_device.py" ; pkill -f "desktop/panel.py" ; pkill -f "agnes.mjs serve"; echo stopped; exit 0
+fi
+# Plug-and-play: started at Windows logon (Startup\KeyScreen.vbs); brings everything up whenever the board appears.
+if [[ "${1:-}" == "watch" ]]; then
+  exec >>"$LOG/watch.log" 2>&1
+  exec 9>"$LOG/watch.lock"; flock -n 9 || { echo "$(date '+%F %T') watcher already running"; exit 0; }
+  while true; do
+    if curl -s -m 2 "$BOARD/api/state" >/dev/null && ! pgrep -f "desktop/panel.py" >/dev/null; then
+      echo "$(date '+%F %T') board up -> starting"; "$0" start
+    fi
+    sleep 5
+  done
 fi
 curl -s -m 3 "$BOARD/api/state" >/dev/null || { echo "板子不可达：$BOARD（检查网线/地址）"; exit 1; }
 # The board has no RTC battery/NTP on a direct cable: copy the PC clock so the bar and schedule are right.
