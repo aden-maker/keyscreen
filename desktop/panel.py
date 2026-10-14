@@ -65,7 +65,10 @@ def host_layout(lang: str, home: list) -> None:
     if not target or not Path(ps).exists():
         return
     enc = base64.b64encode(KL_PS.replace("MODE", "load" if lang in LANG_KLID else "hkl").replace("VAL", str(target)).encode("utf-16-le")).decode()
-    out = subprocess.run([ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc], capture_output=True, text=True, timeout=20).stdout.split()
+    r = subprocess.run([ps, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc], capture_output=True, timeout=20)
+    out = r.stdout.decode(errors="replace").split()
+    if r.returncode or r.stderr:
+        print(f"[lang] host layout switch failed: {r.stderr.decode('gbk', errors='replace')[:300]}")
     if out and not home and lang in LANG_KLID:
         home.append(out[0])
 
