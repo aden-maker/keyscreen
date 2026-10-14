@@ -22,6 +22,7 @@
   .arch .card { text-align: center; min-width: 13vw; }
   .arch i { font-style: normal; font-size: 4vh; color: #b0418a; }
   img.exp { max-height: 52vh; max-width: 100%; border-radius: 18px; }
+  @media print { @page { size: 1280px 720px; margin: 0; } section { display: flex !important; position: relative; width: 1280px; height: 720px; page-break-after: always; animation: none; } .nav { display: none; } }
   .nav { position: fixed; bottom: 2vh; right: 3vw; font-size: 2vh; opacity: .6; }
 </style>
 </head>
@@ -62,7 +63,9 @@
 <section>
   <h2>科学实验：AI 个性化校准能减少误触吗？</h2>
   <p><b>假设</b>：误触主要来自每个键上稳定的落点偏差；Agnes 读取统计后按偏差平移键位，可降低偏差和误触率。
-     <b>方法</b>：同一人输入同一段文本约 3 分钟 → Agnes 调用 get_touch_stats + adjust_key 校准 → 再输入 3 分钟，对比。</p>
+     <b>方法</b>：板上 649 次真实按键做基线；再按时间对半分，前半学习偏移、后半回放检验（留出法）。</p>
+  <p><b>发现</b>：每个键平均有 22 px 的系统偏差，41% 的按键落在键边缘附近——个性化有空间；但回放显示跨会话的偏差并不稳定（一次性校准后误触率 2.1% → 3.7%，偏差仅降 7%）。
+     <b>结论</b>：校准不能"一次定终身"，应由 Agnes 按会话持续、小步地在线调整——这正是 KeyScreen 的设计方向。</p>
   <div style="display:flex; gap:2vw; align-items:center; flex-wrap:wrap">
     <img class="exp" src="exp.svg" alt="实验结果" onerror="this.replaceWith(Object.assign(document.createElement('p'),{textContent:'（运行 desktop/experiment.py 生成实验图）'}))">
     <div id="exptable"></div>

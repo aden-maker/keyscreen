@@ -87,6 +87,8 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     cmd = sys.argv[1] if len(sys.argv) > 1 else "report"
     ph = load()
+    sets = None
+    name = {"baseline": "baseline", "report": "compare"}.get(cmd, cmd)
     if cmd == "start":
         ph.append({"name": sys.argv[2] if len(sys.argv) > 2 else f"phase{len(ph) + 1}", "start": time.time(), "end": None})
         PHASES.write_text(json.dumps(ph, ensure_ascii=False, indent=1))
@@ -104,15 +106,35 @@ def main() -> None:
         r = ask_agnes(prompt)
         (OUT / "calibration.json").write_text(json.dumps({"t": time.time(), "prompt": prompt, **r}, ensure_ascii=False, indent=1), encoding="utf-8")
         print("\n".join(r.get("steps", [])), "\n", r.get("text") or r.get("error"))
-    elif cmd in ("report", "baseline"):
-        if cmd == "baseline" or len(ph) < 2:
+    if cmd == "replay":
+        # Hold-out replay on real touches: learn per-key offsets on the earlier half, apply the same rule
+        # the calibrate prompt gives Agnes (half the mean offset, clamped to ±15 px), judge on the later half.
+        rs = sorted(rows(0))
+        train, test = rs[:len(rs) // 2], rs[len(rs) // 2:]
+        by: dict = {}
+        for _, k, dx, dy, _h in train:
+            by.setdefault(k, []).append((dx, dy))
+        clamp = lambda v: max(-15.0, min(15.0, v))
+        shift = {k: (clamp(sum(p[0] for p in v) / len(v) / 2), clamp(sum(p[1] for p in v) / len(v) / 2))
+                 for k, v in by.items() if len(v) >= 5 and k != "Fn"}
+        inside = lambda dx, dy: int(abs(dx) <= KEY_W / 2 and abs(dy) <= KEY_H / 2)
+        before = [(t, k, dx, dy, inside(dx, dy)) for t, k, dx, dy, _h in test]
+        after = [(t, k, dx - shift.get(k, (0, 0))[0], dy - shift.get(k, (0, 0))[1], 0) for t, k, dx, dy, _h in test]
+        after = [(t, k, dx, dy, inside(dx, dy)) for t, k, dx, dy, _ in after]
+        sets = [("校准前", before, metrics(before)), ("回放校准后", after, metrics(after))]
+        cmd, name = "report", "replay"
+        (OUT / "replay_shift.json").write_text(json.dumps({"train_n": len(train), "test_n": len(test), "shift_px": shift}, ensure_ascii=False, indent=1), encoding="utf-8")
+    if cmd in ("report", "baseline"):
+        if sets:
+            pass
+        elif cmd == "baseline" or len(ph) < 2:
             rs = rows(0)
             sets = [("历史真实按键", rs, metrics(rs))]
         else:
             sets = [(p["name"], rs, metrics(rs)) for p in ph[-2:] for rs in [rows(p["start"], p["end"] or 1e12)]]
-        svg(sets, OUT / ("baseline.svg" if cmd == "baseline" else "compare.svg"))
-        res = {name: m for name, _, m in sets}
-        (OUT / ("baseline.json" if cmd == "baseline" else "results.json")).write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
+        svg(sets, OUT / f"{name}.svg")
+        res = {n: m for n, _, m in sets}
+        (OUT / f"{name}.json").write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
         lines = ["| 指标 | " + " | ".join(n for n, _, _ in sets) + " |", "|---|" + "---|" * len(sets)]
         for label, key, mul, unit in (("按键数", "n", 1, ""), ("误触率", "miss_rate", 100, "%"), ("平均偏移", "mean_error_px", 1, " px"),
                                       ("按键系统偏差", "key_bias_px", 1, " px"), ("靠近键边缘", "edge_rate", 100, "%")):
@@ -121,10 +143,13 @@ def main() -> None:
             a, b = sets[0][2], sets[1][2]
             ch = lambda k: (1 - (b[k] or 0) / a[k]) * 100 if a.get(k) else 0
             lines.append(f"\n校准后：误触率下降 {ch('miss_rate'):.0f}%，按键系统偏差下降 {ch('key_bias_px'):.0f}%，平均偏移下降 {ch('mean_error_px'):.0f}%。")
-        (OUT / ("baseline.md" if cmd == "baseline" else "results.md")).write_text("\n".join(lines) + "\n", encoding="utf-8")
-        if cmd == "report" or not (HERE / "web" / "exp.json").exists() or json.loads((HERE / "web" / "exp.json").read_text()).get("kind") == "baseline":
-            (HERE / "web" / "exp.svg").write_text((OUT / ("baseline.svg" if cmd == "baseline" else "compare.svg")).read_text(encoding="utf-8"), encoding="utf-8")
-            (HERE / "web" / "exp.json").write_text(json.dumps({"kind": cmd, "rows": lines}, ensure_ascii=False), encoding="utf-8")  # for pitch.html
+        if name == "replay":
+            lines.append(f"\n方法：{len(rs)} 次真实按键按时间对半分，前半学习每键偏移（取一半、限 ±15 px，与 Agnes 校准规则相同），在后半 {len(test)} 次上回放判定。")
+        (OUT / f"{name}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        web = HERE / "web" / "exp.json"
+        if name != "baseline" or not web.exists() or json.loads(web.read_text()).get("kind") == "baseline":
+            (HERE / "web" / "exp.svg").write_text((OUT / f"{name}.svg").read_text(encoding="utf-8"), encoding="utf-8")
+            web.write_text(json.dumps({"kind": name, "rows": lines}, ensure_ascii=False), encoding="utf-8")  # for pitch.html
         print("\n".join(lines))
 
 

@@ -1,0 +1,70 @@
+{
+ "校准前": {
+  "n": 325,
+  "miss_rate": 0.0215,
+  "mean_error_px": 34.0,
+  "edge_rate": 0.3846,
+  "key_bias_px": 20.2,
+  "worst_keys": [
+   {
+    "key": "M",
+    "bias_px": 46.6,
+    "n": 5
+   },
+   {
+    "key": "N",
+    "bias_px": 45.0,
+    "n": 6
+   },
+   {
+    "key": "L",
+    "bias_px": 43.8,
+    "n": 5
+   },
+   {
+    "key": "Y",
+    "bias_px": 27.2,
+    "n": 6
+   },
+   {
+    "key": "S",
+    "bias_px": 22.7,
+    "n": 9
+   }
+  ]
+ },
+ "回放校准后": {
+  "n": 325,
+  "miss_rate": 0.0369,
+  "mean_error_px": 33.4,
+  "edge_rate": 0.3754,
+  "key_bias_px": 18.8,
+  "worst_keys": [
+   {
+    "key": "N",
+    "bias_px": 54.6,
+    "n": 6
+   },
+   {
+    "key": "M",
+    "bias_px": 46.6,
+    "n": 5
+   },
+   {
+    "key": "L",
+    "bias_px": 43.8,
+    "n": 5
+   },
+   {
+    "key": "J",
+    "bias_px": 31.2,
+    "n": 17
+   },
+   {
+    "key": "Y",
+    "bias_px": 27.2,
+    "n": 6
+   }
+  ]
+ }
+}
