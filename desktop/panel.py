@@ -54,8 +54,8 @@ public class KL{[DllImport("user32.dll")]public static extern IntPtr LoadKeyboar
 [DllImport("user32.dll")]public static extern IntPtr GetKeyboardLayout(int t);[DllImport("user32.dll")]public static extern int GetWindowThreadProcessId(IntPtr h,IntPtr p);
 [DllImport("user32.dll")]public static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);}
 "@
-$home=(Get-ItemProperty "HKCU:\Keyboard Layout\Preload")."1"
-while(($v=[Console]::In.ReadLine()) -ne $null){if($v -eq "home"){$v=$home}
+$orig=(Get-ItemProperty "HKCU:\Keyboard Layout\Preload")."1"
+while(($v=[Console]::In.ReadLine()) -ne $null){if($v -eq "home"){$v=$orig}
 [void][KL]::PostMessage([KL]::GetForegroundWindow(),0x50,[IntPtr]::Zero,[KL]::LoadKeyboardLayout($v,1));[Console]::Out.WriteLine("ok");[Console]::Out.Flush()}"""
 
 
