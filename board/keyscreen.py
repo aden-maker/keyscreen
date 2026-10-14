@@ -314,6 +314,9 @@ class Hid:
 
     def _rebind(self) -> None:
         import glob
+        if all(Path(s).read_text().strip() == "not attached" for s in glob.glob("/sys/class/udc/*/state")):
+            print("[hid] USB cable to the PC not attached; plug the OTG port into the PC", file=sys.stderr)
+            return
         for udc in glob.glob("/sys/kernel/config/usb_gadget/*/UDC"):
             try:
                 name = Path(udc).read_text().strip() or (os.listdir("/sys/class/udc") or [""])[0]

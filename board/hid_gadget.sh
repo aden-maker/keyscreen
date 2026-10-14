@@ -7,6 +7,8 @@ CFS=/sys/kernel/config
 DESC=05010906a101050719e029e71500250175019508810295017508810395057501050819012905910295017503910395067508150025650507190029658100c0  # boot keyboard
 modprobe libcomposite 2>/dev/null || true
 mountpoint -q $CFS || mount -t configfs none $CFS
+# the OTG phy defaults to auto role detection, which can leave the port in host mode; we are always the device
+for m in /sys/devices/platform/*usb2-phy/otg_mode; do [ "$(cat $m 2>/dev/null)" = otg ] && echo peripheral > $m; done
 UDC=$(ls /sys/class/udc | head -n1)
 [ -n "$UDC" ] || { echo "no UDC: set OTG to peripheral (dr_mode=peripheral) in device tree overlay"; exit 1; }
 if [ -x /etc/init.d/rockchip.sh ]; then
