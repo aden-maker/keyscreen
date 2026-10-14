@@ -23,6 +23,8 @@ PRESETS = [  # (chip label, prompt)
     ("写代码配色", "我要写代码了。用 keyscreen-01 的 list_wallpapers 选一张最适合长时间写代码的壁纸，set_wallpaper 应用到 default profile，配协调的主题色和不透明度。一句话说明理由。"),
     ("校准按键", "调用 keyscreen-01 的 get_touch_stats（since_minutes=0），在 count≥10 的键中（Fn 除外）选出偏移最明显的 2 个，用 adjust_key 按平均偏移的一半（限 ±15 px）微调，一句话汇报。"),
     ("换语言键盘", "换语言键盘"),
+    ("俄语写作", "我要开始写俄语论文了，帮我把键盘整套配好：用 keyscreen-01 的 set_language 切到 ru；list_wallpapers 选一张适合长时间专注写作的壁纸，"
+                "set_wallpaper 应用到 default 并配沉稳的主题色；pet_act 让桌宠 cheer 给我打气；最后用一句中文 + 一句俄语鼓励我。"),
     ("分析打字", "用 keyscreen-01 的 get_touch_stats（since_minutes=0）用两句话总结我的打字：误触率、最容易按偏的键、一条建议。不要修改设置。"),
 ]
 TAP_LINES = ["诶嘿~", "戳我干嘛啦 (>_<)", "Agnes 在这里哦~", "今天也要加油！", "要好好打字哦～", "嗯？有事找我吗？", "点右下角就能和我说话啦"]
@@ -63,7 +65,7 @@ LANG_INTRO = {"en": "已切回英语 QWERTY 键盘，电脑也恢复你原来的
 
 def lang_command(prompt: str) -> str | None:
     """'next' for the language chip, a language code for short commands like 切换到俄语键盘, else None."""
-    if "set_language" in prompt or prompt in ("换语言", "切换语言", "换语言键盘"):
+    if prompt in ("换语言", "切换语言", "换语言键盘"):
         return "next"
     if len(prompt) <= 16 and any(w in prompt for w in ("键盘", "切换", "换成", "切到", "换到")):
         return next((c for c, ws in LANG_WORDS.items() if any(w in prompt for w in ws)), None)
