@@ -279,7 +279,7 @@ class Hid:
     """
 
     def __init__(self, path: str = "/dev/hidg0") -> None:
-        self.f = None
+        self.f, self.path = None, path
         try:
             self.f = open(path, "wb", buffering=0)
         except OSError:
@@ -296,8 +296,39 @@ class Hid:
         if self.f:
             try:
                 self.f.write(r)
+                self.fails = 0
             except OSError as e:
-                print(f"[hid] write failed: {e}", file=sys.stderr)
+                # ESHUTDOWN after the host reset the USB link: the old fd stays dead, so reopen; if the
+                # endpoint is still down the gadget needs a rebind so the PC enumerates the keyboard again.
+                self.fails = getattr(self, "fails", 0) + 1
+                print(f"[hid] write failed ({self.fails}): {e}", file=sys.stderr)
+                try:
+                    self.f.close()
+                    self.f = open(self.path, "wb", buffering=0)
+                    self.f.write(r)
+                    self.fails = 0
+                except OSError:
+                    if self.fails >= 3 and time.time() - getattr(self, "rebound", 0) > 30:
+                        self.rebound = time.time()
+                        threading.Thread(target=self._rebind, daemon=True).start()
+
+    def _rebind(self) -> None:
+        import glob
+        for udc in glob.glob("/sys/kernel/config/usb_gadget/*/UDC"):
+            try:
+                name = Path(udc).read_text().strip() or (os.listdir("/sys/class/udc") or [""])[0]
+                Path(udc).write_text("\n")
+                time.sleep(1.5)
+                Path(udc).write_text(name + "\n")
+                print(f"[hid] rebound USB gadget {udc} -> {name}", file=sys.stderr)
+            except OSError as e:
+                print(f"[hid] rebind failed: {e}", file=sys.stderr)
+        time.sleep(3)
+        with self.lock:
+            try:
+                self.f = open(self.path, "wb", buffering=0)
+            except OSError:
+                pass
 
     def press(self, code: int) -> None:
         with self.lock:
