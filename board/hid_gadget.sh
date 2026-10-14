@@ -9,6 +9,12 @@ modprobe libcomposite 2>/dev/null || true
 mountpoint -q $CFS || mount -t configfs none $CFS
 # the OTG phy defaults to auto role detection, which can leave the port in host mode; we are always the device
 for m in /sys/devices/platform/*usb2-phy/otg_mode; do [ "$(cat $m 2>/dev/null)" = otg ] && echo peripheral > $m; done
+fix_node() {  # a re-created hid function gets a new minor; a stale /dev/hidg0 then fails with ENXIO
+  d=$(cat $CFS/usb_gadget/*/functions/hid.usb0/dev 2>/dev/null | head -n1); [ -n "$d" ] || return 0
+  [ "$(stat -c '%t:%T' /dev/hidg0 2>/dev/null)" = "$(printf '%x:%x' ${d%%:*} ${d##*:})" ] || { rm -f /dev/hidg0; mknod /dev/hidg0 c ${d%%:*} ${d##*:}; }
+  chmod 666 /dev/hidg0
+}
+trap fix_node EXIT
 UDC=$(ls /sys/class/udc | head -n1)
 [ -n "$UDC" ] || { echo "no UDC: set OTG to peripheral (dr_mode=peripheral) in device tree overlay"; exit 1; }
 if [ -x /etc/init.d/rockchip.sh ]; then

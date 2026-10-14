@@ -321,8 +321,9 @@ class Hid:
             try:
                 name = Path(udc).read_text().strip() or (os.listdir("/sys/class/udc") or [""])[0]
                 Path(udc).write_text("\n")
-                time.sleep(1.5)
-                Path(udc).write_text(name + "\n")
+                time.sleep(2)
+                if not Path(udc).read_text().strip():  # the vendor usb daemon usually rebinds by itself
+                    Path(udc).write_text(name + "\n")
                 print(f"[hid] rebound USB gadget {udc} -> {name}", file=sys.stderr)
             except OSError as e:
                 print(f"[hid] rebind failed: {e}", file=sys.stderr)
